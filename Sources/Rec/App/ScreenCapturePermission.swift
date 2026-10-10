@@ -14,4 +14,13 @@ enum ScreenCapturePermission {
     static func openSystemSettings() {
         NSWorkspace.shared.open(settingsURL)
     }
+
+    /// macOS only applies a new Screen Recording grant to a fresh process, so restart Rec in place.
+    static func relaunchApp() throws {
+        let relauncher = Process()
+        relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relauncher.arguments = ["-c", "sleep 0.6; /usr/bin/open \"$0\"", Bundle.main.bundleURL.path]
+        try relauncher.run()
+        NSApp.terminate(nil)
+    }
 }

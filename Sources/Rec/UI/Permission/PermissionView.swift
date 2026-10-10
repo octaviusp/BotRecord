@@ -8,12 +8,14 @@ final class PermissionModel {
 
     var phase = Phase.waiting
     var didOpenSettings = false
+    var relaunchError: String?
 }
 
 /// First-run card explaining the one permission Rec needs and reconnecting as soon as it is granted.
 struct PermissionView: View {
     let model: PermissionModel
     let onOpenSettings: () -> Void
+    let onRelaunch: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -46,7 +48,7 @@ struct PermissionView: View {
             VStack(alignment: .leading, spacing: 12) {
                 PermissionStep(number: 1, title: "Open System Settings", isDone: model.didOpenSettings)
                 PermissionStep(number: 2, title: "Privacy & Security → Screen & System Audio Recording", isDone: false)
-                PermissionStep(number: 3, title: "Turn on Rec", detail: "It reconnects automatically", isDone: false)
+                PermissionStep(number: 3, title: "Turn on Rec, then relaunch it", detail: "macOS applies the permission on restart", isDone: false)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button(action: onOpenSettings) {
@@ -59,6 +61,19 @@ struct PermissionView: View {
             .buttonBorderShape(.capsule)
             .controlSize(.large)
             .tint(Theme.accent)
+            if model.didOpenSettings {
+                Button(action: onRelaunch) {
+                    Label("Turned it on? Relaunch Rec", systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 24)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
+            }
+            if let relaunchError = model.relaunchError {
+                Text(relaunchError).font(.system(size: 12)).foregroundStyle(Theme.warning).multilineTextAlignment(.center)
+            }
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Waiting for permission…").font(.system(size: 12)).foregroundStyle(.secondary)

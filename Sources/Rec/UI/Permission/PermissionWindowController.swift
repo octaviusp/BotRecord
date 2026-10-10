@@ -23,6 +23,7 @@ final class PermissionWindowController: PermissionPresenting {
                     model.didOpenSettings = true
                     ScreenCapturePermission.openSystemSettings()
                 },
+                onRelaunch: { [weak self] in self?.relaunch(model) },
                 onClose: { [weak self] in self?.close() }
             )
         }
@@ -45,6 +46,14 @@ final class PermissionWindowController: PermissionPresenting {
                 }
                 do { try await Task.sleep(for: Self.pollInterval) } catch { return }
             }
+        }
+    }
+
+    private func relaunch(_ model: PermissionModel) {
+        do {
+            try ScreenCapturePermission.relaunchApp()
+        } catch {
+            model.relaunchError = "Couldn't relaunch Rec (\(error.localizedDescription)). Quit it from the menu bar and open it again."
         }
     }
 

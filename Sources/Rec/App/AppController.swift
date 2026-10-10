@@ -37,6 +37,8 @@ final class AppController {
     }
 
     func start() {
+        // A menu-bar app has no windows most of the time; without this macOS may quit it as idle.
+        ProcessInfo.processInfo.disableAutomaticTermination("Rec lives in the menu bar")
         CompanionCache.purgeExpired()
         recents.reload()
         registerHotKeys()
