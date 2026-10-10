@@ -402,7 +402,7 @@
               "id": "RU6aL",
               "name": "Rec — Liquid Glass components",
               "fill": "$fg",
-              "content": "Rec — Liquid Glass components",
+              "content": "BotRecord — Liquid Glass components",
               "fontFamily": "$font-sans",
               "fontSize": 32,
               "fontWeight": "700",
@@ -3474,7 +3474,7 @@
                       "id": "ygwWn",
                       "name": "Rec",
                       "fill": "$fg",
-                      "content": "Rec",
+                      "content": "BotRecord",
                       "fontFamily": "$font-sans",
                       "fontSize": 15,
                       "fontWeight": "700"
@@ -4177,7 +4177,7 @@
                       "id": "dSJFD",
                       "name": "~/Movies/general/screen-recordin",
                       "fill": "$faint",
-                      "content": "~/Movies/general/screen-recordings",
+                      "content": "~/Movies/BotRecord",
                       "fontFamily": "$font-sans",
                       "fontSize": 11,
                       "fontWeight": "normal"
@@ -14017,7 +14017,7 @@
                   "fill": "$muted",
                   "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "content": "Rec only captures when you press Record. macOS asks for this once.",
+                  "content": "BotRecord only captures when you press Record. macOS asks for this once.",
                   "lineHeight": 1.4,
                   "textAlign": "center",
                   "fontFamily": "$font-sans",
@@ -15429,7 +15429,7 @@
                       "id": "NXzCt",
                       "name": "Rec Settings",
                       "fill": "$fg",
-                      "content": "Rec Settings",
+                      "content": "BotRecord Settings",
                       "fontFamily": "$font-sans",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -15541,7 +15541,7 @@
                               "id": "JE45v",
                               "name": "~/Movies/general/screen-recordin",
                               "fill": "$fg",
-                              "content": "~/Movies/general/screen-recordings",
+                              "content": "~/Movies/BotRecord",
                               "fontFamily": "$font-sans",
                               "fontSize": 12,
                               "fontWeight": "normal"
@@ -20457,7 +20457,7 @@
                       "id": "wZaAu",
                       "name": "Rec",
                       "fill": "$fg",
-                      "content": "Rec",
+                      "content": "BotRecord",
                       "fontFamily": "$font-sans",
                       "fontSize": 15,
                       "fontWeight": "700"
@@ -21160,7 +21160,7 @@
                       "id": "NrxH5",
                       "name": "~/Movies/general/screen-recordin",
                       "fill": "$faint",
-                      "content": "~/Movies/general/screen-recordings",
+                      "content": "~/Movies/BotRecord",
                       "fontFamily": "$font-sans",
                       "fontSize": 11,
                       "fontWeight": "normal"
@@ -22461,7 +22461,7 @@
               "id": "OlxNl",
               "name": "Rec — flow & UX decisions",
               "fill": "$fg",
-              "content": "Rec — flow & UX decisions",
+              "content": "BotRecord — flow & UX decisions",
               "fontFamily": "$font-sans",
               "fontSize": 28,
               "fontWeight": "700"
