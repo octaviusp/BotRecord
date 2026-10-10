@@ -1,0 +1,5 @@
+module CSvtAv1 [system] {
+    header "shim.h"
+    link "SvtAv1Enc"
+    export *
+}
