@@ -21,7 +21,9 @@ final class MicrophoneCapture {
     private static let restartAttempts = 3
     private static let restartDelay = Duration.milliseconds(500)
 
-    private let engine = AVAudioEngine()
+    /// Replaced after every configuration change: a reused engine can report a stale input format, and a tap
+    /// installed with it raises an Objective-C exception (uncatchable from Swift) that kills the app.
+    private var engine = AVAudioEngine()
     private let echoCancellation: Bool
     private let onBuffer: @Sendable (Buffer) -> Void
     private let onLost: @MainActor (Error) -> Void
@@ -53,6 +55,17 @@ final class MicrophoneCapture {
         try configureVoiceProcessing()
         try startTap()
         isRunning = true
+        observeConfigurationChanges()
+    }
+
+    func stop() {
+        isRunning = false
+        stopObservingConfigurationChanges()
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+    }
+
+    private func observeConfigurationChanges() {
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
@@ -60,12 +73,9 @@ final class MicrophoneCapture {
         }
     }
 
-    func stop() {
-        isRunning = false
+    private func stopObservingConfigurationChanges() {
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
         configurationObserver = nil
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
     }
 
     // MARK: Engine
@@ -82,9 +92,11 @@ final class MicrophoneCapture {
 
     private func startTap() throws {
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { throw CaptureError.microphoneUnavailable }
-        input.installTap(onBus: 0, bufferSize: Self.tapBufferFrames, format: format, block: Self.tapBlock(onBuffer))
+        let hardware = input.inputFormat(forBus: 0)
+        guard hardware.sampleRate > 0, hardware.channelCount > 0 else { throw CaptureError.microphoneUnavailable }
+        // nil = the bus's live format. Passing a format read earlier crashes when voice processing or a device
+        // switch changed it in between ("Failed to create tap due to format mismatch").
+        input.installTap(onBus: 0, bufferSize: Self.tapBufferFrames, format: nil, block: Self.tapBlock(onBuffer))
         engine.prepare()
         do {
             try engine.start()
@@ -98,13 +110,16 @@ final class MicrophoneCapture {
         guard isRunning, !isRestarting else { return }
         isRestarting = true
         defer { isRestarting = false }
+        stopObservingConfigurationChanges()
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
 
         for attempt in 1...Self.restartAttempts {
             do {
+                engine = AVAudioEngine()
                 try configureVoiceProcessing()
                 try startTap()
+                observeConfigurationChanges()
                 captureLog.info("Microphone restarted after a device change")
                 return
             } catch {
