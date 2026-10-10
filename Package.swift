@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Rec",
+    name: "BotRecord",
     platforms: [.macOS("26.0")],
     dependencies: [
         // On-device live transcription (Nemotron 3.5 Streaming on MLX). Only `NemotronStreamingASR` is linked.
@@ -15,14 +15,14 @@ let package = Package(
         .systemLibrary(name: "CSvtAv1", path: "Sources/CSvtAv1"),
         .systemLibrary(name: "COpus", path: "Sources/COpus"),
         .executableTarget(
-            name: "Rec",
+            name: "BotRecord",
             dependencies: [
                 "CSvtAv1", "COpus",
                 .product(name: "NemotronStreamingASR", package: "speech-swift"),
                 // Only for `Memory.clearCache()`: frees the GPU buffers when the idle model is unloaded.
                 .product(name: "MLX", package: "mlx-swift"),
             ],
-            path: "Sources/Rec",
+            path: "Sources/BotRecord",
             swiftSettings: [.unsafeFlags(["-Xcc", "-I/opt/homebrew/include"])],
             linkerSettings: [.unsafeFlags(["-L/opt/homebrew/lib", "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),

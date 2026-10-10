@@ -3,3 +3,4 @@ out/
 *.xcodeproj
 .DS_Store
 .swiftpm/
+dist/

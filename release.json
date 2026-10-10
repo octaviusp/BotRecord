@@ -1,0 +1,14 @@
+{
+  "version": "0.1.0",
+  "minimumMacOS": "26.0",
+  "arch": "arm64",
+  "assets": [
+    {"name": "BotRecord-0.1.0-arm64.zip", "sha256": "0c8c1434c10a096aaee7cc386117c4cb6a77899d236bf3e0043ebca442d99875", "size": 50767601, "kind": "app"},
+    {"name": "config.json", "sha256": "284d6b51bd2b5a5717ae34caff2ff362535790a853992cd2e06996230699f649", "size": 1718, "kind": "model"},
+    {"name": "vocab.json", "sha256": "f7218f3ae2c5baf002974a7babf50ee1f719732fb1f349eeefb86b62219dc0cd", "size": 103278, "kind": "model"},
+    {"name": "languages.json", "sha256": "a1efe863e1057d4658bce8175c978020ac35a63a3c9a65ae899f324a32c8e4f6", "size": 2020, "kind": "model"},
+    {"name": "model.safetensors", "sha256": "4d7598b934dc106dd648b0299cbb7795c5641761bb158abde9d20558808f8050", "size": 767629118, "kind": "model"},
+    {"name": "LICENSE-OpenMDW-1.1.txt", "sha256": "c5a430721f761a2c5b4affb2e3461308afed5d68de4440d1f0eab9961ad3cbb5", "size": 3144, "kind": "license"}
+  ],
+  "model": {"id": "aufklarer/Nemotron-3.5-ASR-Streaming-0.6B-MLX-8bit", "revision": "5339193d26b1eda4461358c6210f5039e97af213", "installDirName": "nemotron-0.6b-int8-5339193"}
+}

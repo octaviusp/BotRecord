@@ -1,0 +1,62 @@
+#!/bin/bash
+# Removes BotRecord for the current user: the app, launch at login, the speech model, caches and settings.
+# Your recordings and meeting notes are never deleted; their folders are printed at the end.
+set -euo pipefail
+
+BUNDLE_ID="com.octaviusp.botrecord"
+APP="$HOME/Applications/BotRecord.app"
+AGENT_PLIST="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
+PREFERENCES="$HOME/Library/Preferences/$BUNDLE_ID.plist"
+
+say() { printf '%s\n' "$*"; }
+
+# Read before the preferences are deleted: the user may have moved these folders in Settings.
+user_folder() {
+    local key="$1" fallback="$2" value
+    value="$(defaults read "$BUNDLE_ID" "$key" 2>/dev/null || true)"
+    printf '%s\n' "${value:-$fallback}"
+}
+
+remove() {
+    local path="$1"
+    [[ -e "$path" ]] || return 0
+    rm -rf "$path"
+    say "  removed ${path/#$HOME/~}"
+}
+
+main() {
+    local recordings library
+    recordings="$(user_folder outputDirectory "$HOME/Movies/BotRecord")"
+    library="$(user_folder libraryDirectory "$HOME/Documents/BotRecord")"
+
+    if pgrep -x BotRecord >/dev/null; then
+        say "Quitting BotRecord..."
+        osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+        local waited=0
+        while pgrep -x BotRecord >/dev/null && [[ $waited -lt 10 ]]; do sleep 1; waited=$((waited + 1)); done
+        pkill -x BotRecord 2>/dev/null || true
+    fi
+
+    say "Removing BotRecord..."
+    launchctl bootout "gui/$(id -u)/$BUNDLE_ID" 2>/dev/null || true
+    remove "$AGENT_PLIST"
+    remove "$APP"
+    remove "$HOME/Library/Application Support/$BUNDLE_ID"
+    remove "$HOME/Library/Caches/$BUNDLE_ID"
+    remove "$HOME/Library/HTTPStorages/$BUNDLE_ID"
+    remove "$HOME/Library/Saved Application State/$BUNDLE_ID.savedState"
+    defaults delete "$BUNDLE_ID" >/dev/null 2>&1 || true
+    remove "$PREFERENCES"
+    # Forget the Screen Recording / Microphone approvals so a reinstall asks fresh.
+    tccutil reset All "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+    cat <<MSG
+
+BotRecord is uninstalled. Your files were kept:
+  Recordings     ${recordings/#$HOME/~}
+  Meeting notes  ${library/#$HOME/~}
+Delete those folders yourself if you no longer need them.
+MSG
+}
+
+main "$@"

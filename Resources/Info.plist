@@ -3,19 +3,21 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Rec</string>
+    <string>BotRecord</string>
     <key>CFBundleDisplayName</key>
-    <string>Rec</string>
+    <string>BotRecord</string>
     <key>CFBundleIdentifier</key>
-    <string>local.tools.screen-recorder</string>
+    <string>com.octaviusp.botrecord</string>
     <key>CFBundleExecutable</key>
-    <string>Rec</string>
+    <string>BotRecord</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright (c) 2026 octaviusp. MIT License.</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>LSUIElement</key>
@@ -27,8 +29,8 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Rec records your microphone only when you turn on Microphone before recording.</string>
+    <string>BotRecord records your microphone only while a recording or meeting with Microphone turned on is running.</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>Rec records your screen only while you are recording.</string>
+    <string>BotRecord records your screen and system audio only while you are recording.</string>
 </dict>
 </plist>

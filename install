@@ -1,0 +1,280 @@
+#!/bin/bash
+# Installs or updates BotRecord for the current user, no sudo, no Xcode, no Homebrew:
+# downloads the prebuilt app and the speech model pinned in release.json, verifies their sha256,
+# installs them where the app expects them and enables launch at login.
+#
+#   ./install              install or update, then open BotRecord
+#   ./install --no-launch  same, but don't load the login item or open the app
+#
+# BOTRECORD_ASSETS_DIR=<dir> uses release files from <dir> instead of downloading them (offline / testing).
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+MANIFEST="$REPO_ROOT/release.json"
+BUNDLE_ID="com.octaviusp.botrecord"
+RELEASES_URL="https://github.com/octaviusp/BotRecord/releases/download"
+APP_DEST="$HOME/Applications/BotRecord.app"
+SUPPORT_DIR="$HOME/Library/Application Support/$BUNDLE_ID"
+DOWNLOADS_DIR="$HOME/Library/Caches/$BUNDLE_ID/downloads"
+AGENT_PLIST="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
+
+LAUNCH=1
+
+say() { printf '%s\n' "$*"; }
+step() { printf '\n==> %s\n' "$*"; }
+die() { printf '\nerror: %s\n' "$*" >&2; exit 1; }
+sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+file_size() { stat -f %z "$1" 2>/dev/null || echo 0; }
+manifest() { plutil -extract "$1" raw -o - "$MANIFEST"; }
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-launch) LAUNCH=0 ;;
+            -h | --help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+            *) die "unknown option '$1' (try --help)" ;;
+        esac
+        shift
+    done
+}
+
+check_system() {
+    # hw.optional.arm64 is 1 on Apple Silicon even when this shell runs under Rosetta.
+    [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" == "1" ]] ||
+        die "BotRecord needs a Mac with Apple Silicon (M1 or newer)."
+    local minimum major
+    minimum="$(manifest minimumMacOS)"
+    major="$(sw_vers -productVersion | cut -d. -f1)"
+    [[ "$major" -ge "${minimum%%.*}" ]] ||
+        die "BotRecord needs macOS $minimum or newer; this Mac runs $(sw_vers -productVersion)."
+}
+
+# Bytes still to download, so a re-run with everything in place needs no free space at all.
+check_free_space() {
+    local needed_bytes="$1" free_kb
+    free_kb="$(df -Pk "$HOME" | awk 'NR == 2 {print $4}')"
+    local needed_kb=$((needed_bytes / 1024 + 200 * 1024))
+    [[ "$free_kb" -ge "$needed_kb" ]] ||
+        die "not enough free disk space: need about $((needed_kb / 1024)) MB, $((free_kb / 1024)) MB available."
+}
+
+asset_count() { manifest assets; }
+asset_field() { manifest "assets.$1.$2"; }
+
+# The app is always refreshed; model files only when the installed copy is missing or damaged.
+model_installed() {
+    local dir="$1" i
+    for ((i = 0; i < $(asset_count); i++)); do
+        [[ "$(asset_field "$i" kind)" == model ]] || continue
+        local file
+        file="$dir/$(asset_field "$i" name)"
+        [[ "$(file_size "$file")" == "$(asset_field "$i" size)" && "$(sha256 "$file")" == "$(asset_field "$i" sha256)" ]] ||
+            return 1
+    done
+}
+
+# Prints the local path of a verified asset, downloading it (resumably) unless BOTRECORD_ASSETS_DIR is set.
+fetch_asset() {
+    local index="$1" name expected size
+    name="$(asset_field "$index" name)"
+    expected="$(asset_field "$index" sha256)"
+    size="$(asset_field "$index" size)"
+    local path
+    if [[ -n "${BOTRECORD_ASSETS_DIR:-}" ]]; then
+        path="$BOTRECORD_ASSETS_DIR/$name"
+        [[ -f "$path" ]] || die "$name not found in BOTRECORD_ASSETS_DIR ($BOTRECORD_ASSETS_DIR)."
+    else
+        path="$DOWNLOADS_DIR/$name"
+        if [[ ! -f "$path" || "$(sha256 "$path")" != "$expected" ]]; then
+            local partial="$path.part"
+            mkdir -p "$DOWNLOADS_DIR"
+            # A partial file larger than the asset can't be resumed.
+            [[ "$(file_size "$partial")" -le "$size" ]] || rm -f "$partial"
+            if [[ "$(file_size "$partial")" -lt "$size" ]]; then
+                say "Downloading $name ($((size / 1024 / 1024)) MB)..." >&2
+                curl -fL --retry 3 -C - --progress-bar -o "$partial" "$RELEASES_URL/v$(manifest version)/$name" >&2 ||
+                    die "download of $name failed. Check your connection and run ./install again (it resumes)."
+            fi
+            mv "$partial" "$path"
+        fi
+    fi
+    if [[ "$(sha256 "$path")" != "$expected" ]]; then
+        [[ -n "${BOTRECORD_ASSETS_DIR:-}" ]] || rm -f "$path"
+        die "$name failed its checksum (expected $expected). The download was corrupted or tampered with; run ./install again."
+    fi
+    printf '%s\n' "$path"
+}
+
+quit_running_app() {
+    pgrep -x BotRecord >/dev/null || return 0
+    say "Quitting the running BotRecord..."
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+    local waited=0
+    while pgrep -x BotRecord >/dev/null && [[ $waited -lt 10 ]]; do sleep 1; waited=$((waited + 1)); done
+    pkill -x BotRecord 2>/dev/null || true
+}
+
+# Unzips next to the destination and swaps it in, so the new app is a fresh inode (macOS may kill a signed
+# binary overwritten in place) and a failed install leaves the old app untouched.
+install_app() {
+    local zip="$1" stage
+    mkdir -p "$(dirname "$APP_DEST")"
+    rm -rf "$(dirname "$APP_DEST")"/.BotRecord-install.* # left by an interrupted run
+    stage="$(mktemp -d "$(dirname "$APP_DEST")/.BotRecord-install.XXXXXX")"
+    ditto -x -k "$zip" "$stage"
+    [[ -d "$stage/BotRecord.app" ]] || die "the app archive doesn't contain BotRecord.app."
+    codesign --verify --strict "$stage/BotRecord.app" 2>/dev/null || die "the downloaded app failed its signature check."
+    xattr -dr com.apple.quarantine "$stage/BotRecord.app" 2>/dev/null || true
+    if [[ -e "$APP_DEST" ]]; then mv "$APP_DEST" "$stage/previous.app"; fi
+    mv "$stage/BotRecord.app" "$APP_DEST"
+    rm -rf "$stage"
+}
+
+# Same staging-then-rename layout as the app's own model download, so Settings shows the model as ready.
+install_model() {
+    local dir="$1" stage i
+    stage="$(dirname "$dir")/.$(basename "$dir").install"
+    rm -rf "$stage"
+    mkdir -p "$stage"
+    for ((i = 0; i < $(asset_count); i++)); do
+        case "$(asset_field "$i" kind)" in
+            model | license) ;;
+            *) continue ;;
+        esac
+        local source
+        source="$(fetch_asset "$i")"
+        # APFS clone: instant and no second copy on disk.
+        cp -c "$source" "$stage/$(asset_field "$i" name)" 2>/dev/null || cp "$source" "$stage/$(asset_field "$i" name)"
+    done
+    rm -rf "$dir"
+    mv "$stage" "$dir"
+}
+
+install_license_only() {
+    local dir="$1" i
+    for ((i = 0; i < $(asset_count); i++)); do
+        [[ "$(asset_field "$i" kind)" == license ]] || continue
+        [[ -f "$dir/$(asset_field "$i" name)" ]] && continue
+        local source
+        source="$(fetch_asset "$i")"
+        cp "$source" "$dir/"
+    done
+}
+
+# Must match LoginLaunchAgent.swift: runs `open` once at login, no KeepAlive so Quit stays quit.
+write_launch_agent() {
+    mkdir -p "$(dirname "$AGENT_PLIST")"
+    cat > "$AGENT_PLIST.part" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$BUNDLE_ID</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>$APP_DEST</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
+EOF
+    plutil -lint -s "$AGENT_PLIST.part" >/dev/null || die "generated LaunchAgent plist is invalid."
+    mv "$AGENT_PLIST.part" "$AGENT_PLIST"
+}
+
+load_launch_agent() {
+    local domain
+    domain="gui/$(id -u)"
+    launchctl bootout "$domain/$BUNDLE_ID" 2>/dev/null || true
+    launchctl bootstrap "$domain" "$AGENT_PLIST" ||
+        die "couldn't enable launch at login (launchctl bootstrap failed). BotRecord is installed; open it from ~/Applications."
+}
+
+print_summary() {
+    local version="$1"
+    cat <<EOF
+
+BotRecord $version is installed.
+
+  App            ~/Applications/BotRecord.app (opens at login; turn that off in Settings)
+  Recordings     ~/Movies/BotRecord
+  Meeting notes  ~/Documents/BotRecord
+  Speech model   ~/Library/Application Support/$BUNDLE_ID/models
+
+Shortcuts
+  ⌃⌥⌘R  start / stop a screen recording
+  ⌃⌥⌘A  record an area
+  ⌃⌥⌘M  start / stop meeting notes (live transcript, on-device)
+
+macOS will ask for permission once, the first time you need it:
+  - Screen & System Audio Recording, on your first recording (BotRecord shows you where to allow it)
+  - Microphone, on your first meeting or recording with the microphone on
+
+Meeting summaries use Claude Code with your own Claude account, if installed: https://claude.com/claude-code
+Update later with: git pull && ./install     Remove with: ./uninstall
+EOF
+}
+
+main() {
+    parse_arguments "$@"
+    [[ -f "$MANIFEST" ]] || die "release.json not found next to this script; run ./install from the BotRecord folder."
+    check_system
+
+    local version model_dir app_index="" i needed=0
+    version="$(manifest version)"
+    model_dir="$SUPPORT_DIR/models/$(manifest model.installDirName)"
+    step "Installing BotRecord $version"
+
+    local model_ready=0
+    model_installed "$model_dir" && model_ready=1
+    for ((i = 0; i < $(asset_count); i++)); do
+        local kind
+        kind="$(asset_field "$i" kind)"
+        [[ "$kind" == app ]] && app_index="$i"
+        if [[ "$kind" == app || ("$kind" == model && $model_ready == 0) ]]; then
+            needed=$((needed + $(asset_field "$i" size)))
+        fi
+    done
+    [[ -n "$app_index" ]] || die "release.json lists no app asset."
+    if [[ -n "${BOTRECORD_ASSETS_DIR:-}" ]]; then needed=0; fi
+    check_free_space "$needed"
+
+    step "Getting the app"
+    local app_zip
+    app_zip="$(fetch_asset "$app_index")"
+
+    step "Getting the speech model"
+    if [[ $model_ready == 1 ]]; then
+        say "Already installed and verified."
+        install_license_only "$model_dir"
+    else
+        install_model "$model_dir"
+        say "Installed and verified."
+    fi
+
+    step "Installing the app"
+    quit_running_app
+    install_app "$app_zip"
+    say "$APP_DEST"
+
+    step "Launch at login"
+    write_launch_agent
+    if [[ $LAUNCH == 1 ]]; then
+        load_launch_agent
+        open "$APP_DEST"
+        say "Enabled. BotRecord is now in your menu bar."
+    else
+        say "Enabled for the next login (--no-launch: not loaded now)."
+    fi
+
+    # Verified copies now live in place; the download cache would only double the disk use.
+    if [[ -z "${BOTRECORD_ASSETS_DIR:-}" ]]; then rm -rf "$DOWNLOADS_DIR"; fi
+    print_summary "$version"
+}
+
+main "$@"

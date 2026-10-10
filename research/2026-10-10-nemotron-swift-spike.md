@@ -1,7 +1,7 @@
 # Nemotron 3.5 ASR Streaming 0.6B INT8 in Swift + MLX without Xcode (spike, 2026-10-10)
 
 Apple M5 Pro, macOS 26, Swift 6.3.3, Command Line Tools only (no `xcrun metal`). Spike code lived in
-`/private/tmp/claude-501/nemotron-spike/` (throwaway). Reference: `~/Documents/codes/personal/tools/asr-bench/HANDOFF-swift.md`.
+a throwaway scratch directory (not kept). Reference: an earlier private ASR benchmark of the same model.
 
 ## Verdict
 Works without Xcode. SwiftPM + CLT builds the Swift code and MLX's C++ core (mlx-swift builds kernels in JIT mode);
@@ -20,7 +20,7 @@ the only missing piece, the base Metal library, comes prebuilt from the PyPI `ml
   sha256 `198488eb61359e953580a9c4530400feee1a06dd2f28a930a6ffa58aec66a597`). The wheel version MUST equal the vendored core version; recheck on every mlx-swift bump.
 - Placement (search order in `device.cpp`): `<exe dir>/mlx.metallib`, `<exe dir>/Resources/mlx.metallib`,
   `mlx-swift_Cmlx.bundle/default.metallib` under `Bundle.main`/all bundles, … Recommended for the app:
-  `Rec.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib` (verified with codesign --strict).
+  `BotRecord.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib` (verified with codesign --strict).
 - First launch of a new binary: `warmUp()` ≈ 2.3 s (Metal shader cache), then ≈ 0.02 s. Call it off the main thread.
 
 ## Model bundle
