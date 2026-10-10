@@ -1,6 +1,6 @@
 import CoreMedia
 
-/// ScreenCaptureKit buffers in, one gapless 48 kHz stereo stream out (all sources mixed).
+/// ScreenCaptureKit buffers (or converted chunks) in, one gapless 48 kHz stereo stream out (all sources mixed).
 final class MixedAudioPipeline {
     private var converters: [AudioSource: StereoPCMConverter] = [:]
     private let mixer: AudioMixer
@@ -14,6 +14,13 @@ final class MixedAudioPipeline {
     func process(_ sampleBuffer: CMSampleBuffer, from source: AudioSource) throws -> StereoPCMChunk? {
         guard let converter = converters[source] else { return nil }
         let chunk = try converter.convert(sampleBuffer)
+        mixer.append(chunk, from: source)
+        return mixer.drain()
+    }
+
+    /// Same as above for audio that is already 48 kHz stereo on the recording timeline.
+    func process(_ chunk: StereoPCMChunk, from source: AudioSource) -> StereoPCMChunk? {
+        guard converters[source] != nil else { return nil }
         mixer.append(chunk, from: source)
         return mixer.drain()
     }

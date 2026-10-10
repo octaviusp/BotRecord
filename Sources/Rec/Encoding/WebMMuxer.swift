@@ -1,10 +1,11 @@
 import Foundation
 
-/// Hand-written WebM writer: one AV1 video track and an optional Opus track.
+/// Hand-written WebM writer: an optional AV1 video track plus any number of audio tracks.
 ///
 /// Layout: EBML header, Segment { reserved SeekHead, Info, Tracks, Clusters…, Cues }.
 /// Clusters are built in memory (≤ 5 s) and written with exact sizes; the Segment size,
-/// Duration and SeekHead are patched in place by `finish()`.
+/// Duration and SeekHead are patched in place by `finish()`. The Segment starts with an unknown
+/// size, so a file cut short by a crash still plays up to its last written cluster.
 /// Not thread-safe: the owner confines every call to one serial queue.
 final class WebMMuxer: @unchecked Sendable {
     struct VideoTrack {
@@ -16,13 +17,31 @@ final class WebMMuxer: @unchecked Sendable {
         let nominalFrameDurationMilliseconds: Int64
     }
 
-    private static let videoTrackNumber: UInt8 = 1
-    private static let audioTrackNumber: UInt8 = 2
+    struct AudioTrack {
+        /// Shown by players as the track title (e.g. "Me", "Others").
+        let name: String?
+        let codecID: String
+        let codecPrivate: Data
+        let codecDelayNanoseconds: UInt64
+        let seekPreRollNanoseconds: UInt64
+        let sampleRate: Double
+        let channelCount: Int
+    }
+
+    private struct CuePoint {
+        let timestamp: Int64
+        let track: UInt8
+        let clusterPosition: UInt64
+    }
+
     private static let maxClusterDurationMilliseconds: Int64 = 5_000
     private static let reservedSeekHeadBytes = 128
 
     private let file: OutputFile
-    private let video: VideoTrack
+    private let video: VideoTrack?
+    private let videoTrackNumber: UInt8 = 1
+    /// Track number of each audio track, in the order given to `init`.
+    private let audioTrackNumbers: [UInt8]
     private let segmentSizeOffset: UInt64
     private let segmentDataStart: UInt64
     private let seekHeadOffset: UInt64
@@ -33,14 +52,22 @@ final class WebMMuxer: @unchecked Sendable {
     private var cluster: Data?
     private var clusterTimestamp: Int64 = 0
     private var clusterHasVideo = false
-    private var cuePoints: [(timestamp: Int64, clusterPosition: UInt64)] = []
-    /// Audio waits here until video has reached its timestamp, so blocks stay in time order.
-    private var pendingAudio: [EncodedAudioPacket] = []
+    private var cuePoints: [CuePoint] = []
+    /// Audio waits here until every pacing track has reached its timestamp, so blocks stay in time order.
+    /// The video track paces when present; otherwise every audio track does.
+    private var pendingAudio: [[EncodedAudioPacket]]
+    private var lastAudioTimestamps: [Int64]
     private var lastVideoTimestamp: Int64 = -1
     private var endTimestamp: Int64 = 0
 
-    init(url: URL, video: VideoTrack, includesAudio: Bool) throws {
+    init(url: URL, video: VideoTrack?, audio: [AudioTrack]) throws {
+        precondition(video != nil || !audio.isEmpty, "a WebM file needs at least one track")
+        precondition(audio.count < 126, "track numbers are written as 1-byte vints")
         self.video = video
+        let firstAudioNumber: UInt8 = video == nil ? 1 : 2
+        audioTrackNumbers = audio.indices.map { firstAudioNumber + UInt8($0) }
+        pendingAudio = Array(repeating: [], count: audio.count)
+        lastAudioTimestamps = Array(repeating: -1, count: audio.count)
         file = try OutputFile(url: url)
 
         try file.write(Self.ebmlHeader())
@@ -53,33 +80,36 @@ final class WebMMuxer: @unchecked Sendable {
         try file.write(EBML.void(totalBytes: Self.reservedSeekHeadBytes))
 
         infoPosition = file.offset - segmentDataStart
-        let info = Self.info()
-        try file.write(info)
+        try file.write(Self.info())
         // Duration is the Info's last child, so its 8-byte float payload ends the element.
         durationOffset = file.offset - 8
 
         tracksPosition = file.offset - segmentDataStart
-        try file.write(Self.tracks(video: video, includesAudio: includesAudio))
+        try file.write(Self.tracks(video: video, videoNumber: videoTrackNumber, audio: Array(zip(audio, audioTrackNumbers))))
     }
 
     func addVideo(_ packet: EncodedVideoPacket) throws {
+        guard let video else { throw EncodingError.encoderFailure("video packet for a file without a video track") }
         try writeAudio(upTo: packet.ptsMilliseconds)
         let startsCluster = packet.isKeyframe
             && !(cluster != nil && !clusterHasVideo && clusterTimestamp == packet.ptsMilliseconds)
         if startsCluster { try openCluster(at: packet.ptsMilliseconds) }
         if packet.isKeyframe {
-            cuePoints.append((packet.ptsMilliseconds, clusterStartPosition))
+            cuePoints.append(CuePoint(timestamp: packet.ptsMilliseconds, track: videoTrackNumber,
+                                      clusterPosition: clusterStartPosition))
         }
-        try appendBlock(track: Self.videoTrackNumber, timestamp: packet.ptsMilliseconds,
+        try appendBlock(track: videoTrackNumber, timestamp: packet.ptsMilliseconds,
                         isKeyframe: packet.isKeyframe, payload: packet.data)
         clusterHasVideo = true
         lastVideoTimestamp = packet.ptsMilliseconds
         endTimestamp = max(endTimestamp, packet.ptsMilliseconds + video.nominalFrameDurationMilliseconds)
     }
 
-    func addAudio(_ packet: EncodedAudioPacket) throws {
-        pendingAudio.append(packet)
-        try writeAudio(upTo: lastVideoTimestamp)
+    /// - Parameter trackIndex: position of the track in the `audio` array given to `init`.
+    func addAudio(_ packet: EncodedAudioPacket, trackIndex: Int) throws {
+        pendingAudio[trackIndex].append(packet)
+        lastAudioTimestamps[trackIndex] = packet.ptsMilliseconds
+        try writeAudio(upTo: video == nil ? lastAudioTimestamps.min() ?? -1 : lastVideoTimestamp)
     }
 
     /// Writes buffered blocks, Cues, SeekHead, Duration and Segment size, then closes the file.
@@ -107,21 +137,35 @@ final class WebMMuxer: @unchecked Sendable {
 
     private var clusterStartPosition: UInt64 { file.offset - segmentDataStart }
 
+    /// Merges the audio queues in timestamp order, up to and including `timestamp`.
     private func writeAudio(upTo timestamp: Int64) throws {
-        var written = 0
-        for packet in pendingAudio {
-            guard packet.ptsMilliseconds <= timestamp else { break }
-            try appendBlock(track: Self.audioTrackNumber, timestamp: packet.ptsMilliseconds,
+        var heads = Array(repeating: 0, count: pendingAudio.count)
+        while let index = nextAudioTrack(heads: heads, limit: timestamp) {
+            let packet = pendingAudio[index][heads[index]]
+            try appendBlock(track: audioTrackNumbers[index], timestamp: packet.ptsMilliseconds,
                             isKeyframe: true, payload: packet.data)
             endTimestamp = max(endTimestamp, packet.ptsMilliseconds + packet.durationMilliseconds)
-            written += 1
+            heads[index] += 1
         }
-        pendingAudio.removeFirst(written)
+        for index in heads.indices where heads[index] > 0 { pendingAudio[index].removeFirst(heads[index]) }
+    }
+
+    private func nextAudioTrack(heads: [Int], limit: Int64) -> Int? {
+        var best: (index: Int, timestamp: Int64)?
+        for index in pendingAudio.indices where heads[index] < pendingAudio[index].count {
+            let timestamp = pendingAudio[index][heads[index]].ptsMilliseconds
+            if timestamp <= limit, timestamp < best?.timestamp ?? .max { best = (index, timestamp) }
+        }
+        return best?.index
     }
 
     private func appendBlock(track: UInt8, timestamp: Int64, isKeyframe: Bool, payload: Data) throws {
         if cluster == nil || timestamp - clusterTimestamp >= Self.maxClusterDurationMilliseconds {
             try openCluster(at: timestamp)
+            // Without video every cluster starts with an Opus block, which is always a seek point.
+            if video == nil {
+                cuePoints.append(CuePoint(timestamp: timestamp, track: track, clusterPosition: clusterStartPosition))
+            }
         }
         let relative = Int16(timestamp - clusterTimestamp)
         var block = Data([0x80 | track]) // track number as a 1-byte vint
@@ -151,7 +195,7 @@ final class WebMMuxer: @unchecked Sendable {
             EBML.master(MatroskaID.cuePoint, [
                 EBML.unsigned(MatroskaID.cueTime, UInt64(point.timestamp)),
                 EBML.master(MatroskaID.cueTrackPositions, [
-                    EBML.unsigned(MatroskaID.cueTrack, UInt64(Self.videoTrackNumber)),
+                    EBML.unsigned(MatroskaID.cueTrack, UInt64(point.track)),
                     EBML.unsigned(MatroskaID.cueClusterPosition, point.clusterPosition),
                 ]),
             ])
@@ -196,44 +240,52 @@ final class WebMMuxer: @unchecked Sendable {
         ])
     }
 
-    private static func tracks(video: VideoTrack, includesAudio: Bool) -> Data {
-        var entries = [
-            EBML.master(MatroskaID.trackEntry, [
-                EBML.unsigned(MatroskaID.trackNumber, UInt64(videoTrackNumber)),
-                EBML.unsigned(MatroskaID.trackUID, UInt64.random(in: 1...UInt64.max)),
-                EBML.unsigned(MatroskaID.trackType, 1),
-                EBML.unsigned(MatroskaID.flagLacing, 0),
-                EBML.string(MatroskaID.codecID, "V_AV1"),
-                EBML.element(MatroskaID.codecPrivate, video.codecPrivate),
-                EBML.master(MatroskaID.video, [
-                    EBML.unsigned(MatroskaID.pixelWidth, UInt64(video.width)),
-                    EBML.unsigned(MatroskaID.pixelHeight, UInt64(video.height)),
-                    // BT.709, limited range: matches the encoder's sequence header.
-                    EBML.master(MatroskaID.colour, [
-                        EBML.unsigned(MatroskaID.matrixCoefficients, 1),
-                        EBML.unsigned(MatroskaID.range, 1),
-                        EBML.unsigned(MatroskaID.transferCharacteristics, 1),
-                        EBML.unsigned(MatroskaID.primaries, 1),
-                    ]),
+    private static func tracks(video: VideoTrack?, videoNumber: UInt8, audio: [(AudioTrack, UInt8)]) -> Data {
+        var entries = video.map { [videoEntry($0, number: videoNumber)] } ?? []
+        entries += audio.map { track, number in audioEntry(track, number: number) }
+        return EBML.master(MatroskaID.tracks, entries)
+    }
+
+    private static func videoEntry(_ video: VideoTrack, number: UInt8) -> Data {
+        EBML.master(MatroskaID.trackEntry, [
+            EBML.unsigned(MatroskaID.trackNumber, UInt64(number)),
+            EBML.unsigned(MatroskaID.trackUID, UInt64.random(in: 1...UInt64.max)),
+            EBML.unsigned(MatroskaID.trackType, 1),
+            EBML.unsigned(MatroskaID.flagLacing, 0),
+            EBML.string(MatroskaID.codecID, "V_AV1"),
+            EBML.element(MatroskaID.codecPrivate, video.codecPrivate),
+            EBML.master(MatroskaID.video, [
+                EBML.unsigned(MatroskaID.pixelWidth, UInt64(video.width)),
+                EBML.unsigned(MatroskaID.pixelHeight, UInt64(video.height)),
+                // BT.709, limited range: matches the encoder's sequence header.
+                EBML.master(MatroskaID.colour, [
+                    EBML.unsigned(MatroskaID.matrixCoefficients, 1),
+                    EBML.unsigned(MatroskaID.range, 1),
+                    EBML.unsigned(MatroskaID.transferCharacteristics, 1),
+                    EBML.unsigned(MatroskaID.primaries, 1),
                 ]),
             ]),
+        ])
+    }
+
+    private static func audioEntry(_ track: AudioTrack, number: UInt8) -> Data {
+        var children = [
+            EBML.unsigned(MatroskaID.trackNumber, UInt64(number)),
+            EBML.unsigned(MatroskaID.trackUID, UInt64.random(in: 1...UInt64.max)),
+            EBML.unsigned(MatroskaID.trackType, 2),
+            EBML.unsigned(MatroskaID.flagLacing, 0),
         ]
-        if includesAudio {
-            entries.append(EBML.master(MatroskaID.trackEntry, [
-                EBML.unsigned(MatroskaID.trackNumber, UInt64(audioTrackNumber)),
-                EBML.unsigned(MatroskaID.trackUID, UInt64.random(in: 1...UInt64.max)),
-                EBML.unsigned(MatroskaID.trackType, 2),
-                EBML.unsigned(MatroskaID.flagLacing, 0),
-                EBML.string(MatroskaID.codecID, "A_OPUS"),
-                EBML.element(MatroskaID.codecPrivate, OpusAudioEncoder.identificationHeader),
-                EBML.unsigned(MatroskaID.codecDelay, OpusAudioEncoder.codecDelayNanoseconds),
-                EBML.unsigned(MatroskaID.seekPreRoll, OpusAudioEncoder.seekPreRollNanoseconds),
-                EBML.master(MatroskaID.audio, [
-                    EBML.float(MatroskaID.samplingFrequency, Double(OpusAudioEncoder.sampleRate)),
-                    EBML.unsigned(MatroskaID.channels, UInt64(OpusAudioEncoder.channelCount)),
-                ]),
-            ]))
-        }
-        return EBML.master(MatroskaID.tracks, entries)
+        if let name = track.name { children.append(EBML.string(MatroskaID.name, name)) }
+        children += [
+            EBML.string(MatroskaID.codecID, track.codecID),
+            EBML.element(MatroskaID.codecPrivate, track.codecPrivate),
+            EBML.unsigned(MatroskaID.codecDelay, track.codecDelayNanoseconds),
+            EBML.unsigned(MatroskaID.seekPreRoll, track.seekPreRollNanoseconds),
+            EBML.master(MatroskaID.audio, [
+                EBML.float(MatroskaID.samplingFrequency, track.sampleRate),
+                EBML.unsigned(MatroskaID.channels, UInt64(track.channelCount)),
+            ]),
+        ]
+        return EBML.master(MatroskaID.trackEntry, children)
     }
 }

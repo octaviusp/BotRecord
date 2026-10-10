@@ -4,6 +4,7 @@ import SwiftUI
 /// One past recording: thumbnail, title, meta, and (on hover) copy + reveal.
 struct RecentRow: View {
     let recording: RecentRecording
+    let transcript: TranscriptStatus
 
     @State private var isHovering = false
     @State private var didCopy = false
@@ -32,6 +33,7 @@ struct RecentRow: View {
         if let metadata = recording.metadata { parts.append(Formatters.duration(metadata.duration)) }
         parts.append(Formatters.fileSize(recording.fileSize))
         if let metadata = recording.metadata { parts.append(metadata.format.containerLabel) }
+        parts.append(transcript.label)
         return parts.joined(separator: " · ")
     }
 

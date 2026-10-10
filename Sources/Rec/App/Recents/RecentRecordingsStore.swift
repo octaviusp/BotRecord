@@ -2,13 +2,15 @@ import AppKit
 import Observation
 import os
 
-/// Latest recordings in the output folder, enriched with sidecar metadata and thumbnails
-/// kept in the app's cache so the output folder stays clean.
+/// Latest screen recordings (output folder, with sidecar metadata and thumbnails kept in the app's cache so
+/// that folder stays clean) and latest meetings (library), mixed by date.
 @MainActor @Observable
 final class RecentRecordingsStore {
     static let visibleCount = 3
 
-    private(set) var items: [RecentRecording] = []
+    private(set) var items: [RecentItem] = []
+    /// Newest meeting even when screen recordings push it out of `items`: the summary button follows it.
+    private(set) var latestMeeting: MeetingEntry?
 
     private let settings: AppSettings
     private let logger = Logger(subsystem: AppPaths.identifier, category: "recents")
@@ -19,7 +21,10 @@ final class RecentRecordingsStore {
     }
 
     func reload() {
-        items = latestFiles().map(makeRecording)
+        let meetings = settings.library.latestMeetings(limit: Self.visibleCount)
+        latestMeeting = meetings.first
+        let mixed = latestFiles().map { RecentItem.screen(makeRecording($0)) } + meetings.map(RecentItem.meeting)
+        items = Array(mixed.sorted { $0.createdAt > $1.createdAt }.prefix(Self.visibleCount))
     }
 
     /// Persists metadata and thumbnail for a fresh recording, then refreshes the list.
@@ -69,7 +74,9 @@ final class RecentRecordingsStore {
         let metadata = (try? Data(contentsOf: sidecarURL(for: file.url, extension: "json")))
             .flatMap { try? JSONDecoder().decode(RecordingMetadata.self, from: $0) }
         let thumbnail = NSImage(contentsOf: sidecarURL(for: file.url, extension: "png"))
-        return RecentRecording(url: file.url, createdAt: file.createdAt, fileSize: file.size, metadata: metadata, thumbnail: thumbnail)
+        let hasTranscript = FileManager.default.fileExists(atPath: RecordingTranscriptFiles(videoURL: file.url).markdownURL.path)
+        return RecentRecording(url: file.url, createdAt: file.createdAt, fileSize: file.size, metadata: metadata,
+                               thumbnail: thumbnail, hasTranscript: hasTranscript)
     }
 
     private func sidecarURL(for recording: URL, extension ext: String) -> URL {

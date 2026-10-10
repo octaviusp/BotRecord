@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
+    let transcription: TranscriptionService
     let onRequestPermission: () -> Void
 
     @State private var isPermissionGranted = ScreenCapturePermission.isGranted
@@ -12,6 +13,8 @@ struct SettingsView: View {
             VStack(spacing: 20) {
                 recordingGroup
                 afterRecordingGroup
+                MeetingSettingsGroup(settings: settings)
+                TranscriptSettingsGroup(settings: settings, transcription: transcription)
                 shortcutsGroup
                 systemGroup
             }
@@ -27,16 +30,8 @@ struct SettingsView: View {
     private var recordingGroup: some View {
         SettingsGroup(title: "Recording") {
             SettingsRow(title: "Save to") {
-                HStack(spacing: 8) {
-                    Label(settings.outputDirectory.path.abbreviatedPath, systemImage: "folder")
-                        .font(.system(size: 12))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.primary.opacity(0.07)))
-                    Button("Change…", action: chooseOutputDirectory)
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.capsule)
+                FolderField(url: settings.outputDirectory) {
+                    if let url = FolderPicker.choose(startingAt: settings.outputDirectory) { settings.outputDirectory = url }
                 }
             }
             SettingsRow(title: "Resolution", subtitle: "Scaled from your Retina display") {
@@ -86,6 +81,7 @@ struct SettingsView: View {
         SettingsGroup(title: "Shortcuts") {
             SettingsRow(title: "Start / stop recording") { KeyCaps(keys: GlobalShortcut.toggleRecording.keyCaps) }
             SettingsRow(title: "Record area") { KeyCaps(keys: GlobalShortcut.recordArea.keyCaps) }
+            SettingsRow(title: "Start / stop meeting notes") { KeyCaps(keys: GlobalShortcut.toggleMeeting.keyCaps) }
             SettingsRow(title: "Cancel selection") { KeyCaps(keys: ["Esc"]) }
         }
     }
@@ -107,18 +103,6 @@ struct SettingsView: View {
                 }
             }
         }
-    }
-
-    private func chooseOutputDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        panel.directoryURL = settings.outputDirectory
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        settings.outputDirectory = url
     }
 
     /// The user flips this in System Settings, so keep the badge honest while the window is open.

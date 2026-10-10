@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import CoreMedia
 import CoreVideo
@@ -8,6 +9,7 @@ enum MP4WriterError: LocalizedError, CustomNSError {
     case writerFailed(underlying: Error?)
     case noFramesRecorded
     case notWriting
+    case scalingFailed(detail: String)
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +17,7 @@ enum MP4WriterError: LocalizedError, CustomNSError {
         case .writerFailed(let underlying): "The MP4 file could not be written: \(Self.detail(underlying))"
         case .noFramesRecorded: "No video frames were recorded."
         case .notWriting: "The MP4 file is already closed."
+        case .scalingFailed(let detail): "A video frame could not be resized for the MP4 file: \(detail)"
         }
     }
 
@@ -31,11 +34,23 @@ enum MP4WriterError: LocalizedError, CustomNSError {
     }
 }
 
-/// Hardware H.264 MP4 writer. Appends ScreenCaptureKit's IOSurface-backed buffers as they are, so the
-/// pixels go straight to the media engine without a CPU copy.
+/// Hardware H.264 MP4 writer. A recording appends ScreenCaptureKit's IOSurface-backed buffers as they are,
+/// so the pixels go straight to the media engine without a CPU copy.
 final class MP4Writer: MediaSink {
+    enum Purpose {
+        /// The user's chosen output, written at the capture size.
+        case recording
+        /// The copy for chat apps (WhatsApp, iMessage): fitted to WhatsApp's HD box and resized here with a
+        /// Lanczos filter, because WhatsApp would otherwise resample it again with a softer bilinear one.
+        case chatCopy
+    }
+
     private static let referenceBitsPerPixelPerFrame = 6_000_000.0 / (1920 * 1080 * 60)
+    /// 4 Mbps for a 1280x800 frame at 60 fps. WhatsApp re-encodes at about 2.5 Mbps whatever it receives, so this
+    /// only matters when the file travels untouched (sent as a document, AirDrop, iMessage).
+    private static let chatCopyBitsPerPixelPerFrame = 4_000_000.0 / (1280 * 800 * 60)
     private static let minimumBitrate = 1_500_000
+    private static let minimumChatCopyBitrate = 3_000_000
     private static let audioBitrate = 128_000
     private static let keyFrameInterval: TimeInterval = 2
     /// Finer than the 600 default so 60 fps frame times stay exact.
@@ -49,24 +64,33 @@ final class MP4Writer: MediaSink {
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
     private let pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor
+    /// Only set when the file's size differs from the size of the captured frames.
+    private let scaler: LanczosFrameScaler?
     private let audioInputs: [AudioSource: AVAssetWriterInput]
     private var state = State.writing
     private var appendedVideoFrames = 0
     private var droppedVideoFrames = 0
 
-    init(url: URL, config: VideoEncodeConfig, includeAudio: Bool) throws {
+    init(url: URL, config: VideoEncodeConfig, includeAudio: Bool, purpose: Purpose = .recording) throws {
         self.url = url
         writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
-        videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: Self.videoSettings(for: config))
+        let capturedSize = CaptureGeometry.PixelSize(width: config.width, height: config.height)
+        let fileSize = purpose == .chatCopy ? CaptureGeometry.whatsAppSize(fitting: capturedSize) : capturedSize
+        scaler = fileSize == capturedSize ? nil : LanczosFrameScaler(outputSize: fileSize)
+
+        videoInput = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: Self.videoSettings(for: config, fileSize: fileSize, purpose: purpose)
+        )
         videoInput.expectsMediaDataInRealTime = true
         videoInput.mediaTimeScale = Self.videoTimescale
         pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: videoInput,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-                kCVPixelBufferWidthKey as String: config.width,
-                kCVPixelBufferHeightKey as String: config.height,
+                kCVPixelBufferWidthKey as String: fileSize.width,
+                kCVPixelBufferHeightKey as String: fileSize.height,
             ]
         )
         writer.add(videoInput)
@@ -92,7 +116,8 @@ final class MP4Writer: MediaSink {
             droppedVideoFrames += 1
             return
         }
-        guard pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+        let frame = try scaler?.scaled(pixelBuffer) ?? pixelBuffer
+        guard pixelBufferAdaptor.append(frame, withPresentationTime: presentationTime) else {
             throw MP4WriterError.writerFailed(underlying: writer.error)
         }
         appendedVideoFrames += 1
@@ -154,15 +179,23 @@ final class MP4Writer: MediaSink {
         return true
     }
 
-    static func bitrate(width: Int, height: Int, frameRate: Int) -> Int {
-        max(minimumBitrate, Int(Double(width * height * frameRate) * referenceBitsPerPixelPerFrame))
+    static func bitrate(width: Int, height: Int, frameRate: Int, purpose: Purpose = .recording) -> Int {
+        let pixelsPerSecond = Double(width * height * frameRate)
+        switch purpose {
+        case .recording: return max(minimumBitrate, Int(pixelsPerSecond * referenceBitsPerPixelPerFrame))
+        case .chatCopy: return max(minimumChatCopyBitrate, Int(pixelsPerSecond * chatCopyBitsPerPixelPerFrame))
+        }
     }
 
-    private static func videoSettings(for config: VideoEncodeConfig) -> [String: Any] {
+    private static func videoSettings(
+        for config: VideoEncodeConfig,
+        fileSize: CaptureGeometry.PixelSize,
+        purpose: Purpose
+    ) -> [String: Any] {
         [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: config.width,
-            AVVideoHeightKey: config.height,
+            AVVideoWidthKey: fileSize.width,
+            AVVideoHeightKey: fileSize.height,
             AVVideoEncoderSpecificationKey: [
                 kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: true,
             ],
@@ -172,7 +205,9 @@ final class MP4Writer: MediaSink {
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
             ],
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: bitrate(width: config.width, height: config.height, frameRate: config.frameRate),
+                AVVideoAverageBitRateKey: bitrate(
+                    width: fileSize.width, height: fileSize.height, frameRate: config.frameRate, purpose: purpose
+                ),
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
                 AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCABAC,
                 AVVideoMaxKeyFrameIntervalDurationKey: keyFrameInterval,
@@ -189,4 +224,93 @@ final class MP4Writer: MediaSink {
         AVNumberOfChannelsKey: 2,
         AVEncoderBitRateKey: audioBitrate,
     ]
+}
+
+/// Downscales 8-bit 4:2:0 biplanar frames with vImage's Lanczos resampler. ScreenCaptureKit and AVAssetWriter
+/// both resize bilinearly, which measurably softens small UI text; Lanczos keeps its edges.
+private final class LanczosFrameScaler {
+    private let outputSize: CaptureGeometry.PixelSize
+    private var pool: CVPixelBufferPool?
+    private var scratch: UnsafeMutableRawPointer?
+    private var scratchSourceSize: CaptureGeometry.PixelSize?
+
+    init(outputSize: CaptureGeometry.PixelSize) {
+        self.outputSize = outputSize
+    }
+
+    deinit {
+        scratch?.deallocate()
+    }
+
+    func scaled(_ source: CVPixelBuffer) throws -> CVPixelBuffer {
+        let sourceSize = CaptureGeometry.PixelSize(width: CVPixelBufferGetWidth(source), height: CVPixelBufferGetHeight(source))
+        let destination = try makeDestination()
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(destination, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(destination, [])
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+        }
+        var luma = try planes(source, destination, index: 0)
+        var chroma = try planes(source, destination, index: 1)
+        try prepareScratch(for: sourceSize, luma: &luma, chroma: &chroma)
+        try check(vImageScale_Planar8(&luma.source, &luma.destination, scratch, Self.flags), "luma")
+        try check(vImageScale_CbCr8(&chroma.source, &chroma.destination, scratch, Self.flags), "chroma")
+        // The writer's colour tags come from its settings, but VideoToolbox also reads the buffer's own.
+        CVBufferPropagateAttachments(source, destination)
+        return destination
+    }
+
+    private static let flags = vImage_Flags(kvImageHighQualityResampling)
+
+    private typealias PlanePair = (source: vImage_Buffer, destination: vImage_Buffer)
+
+    private func planes(_ source: CVPixelBuffer, _ destination: CVPixelBuffer, index: Int) throws -> PlanePair {
+        guard let sourceBase = CVPixelBufferGetBaseAddressOfPlane(source, index),
+              let destinationBase = CVPixelBufferGetBaseAddressOfPlane(destination, index) else {
+            throw MP4WriterError.scalingFailed(detail: "frame has no readable plane \(index)")
+        }
+        func buffer(_ pixelBuffer: CVPixelBuffer, _ base: UnsafeMutableRawPointer) -> vImage_Buffer {
+            vImage_Buffer(
+                data: base,
+                height: vImagePixelCount(CVPixelBufferGetHeightOfPlane(pixelBuffer, index)),
+                width: vImagePixelCount(CVPixelBufferGetWidthOfPlane(pixelBuffer, index)),
+                rowBytes: CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, index)
+            )
+        }
+        return (buffer(source, sourceBase), buffer(destination, destinationBase))
+    }
+
+    /// vImage needs working memory sized for the exact source and destination; the frame size never changes
+    /// mid-recording, so one allocation serves every frame.
+    private func prepareScratch(for sourceSize: CaptureGeometry.PixelSize, luma: inout PlanePair, chroma: inout PlanePair) throws {
+        guard scratchSourceSize != sourceSize else { return }
+        let lumaBytes = vImageScale_Planar8(&luma.source, &luma.destination, nil, Self.flags | vImage_Flags(kvImageGetTempBufferSize))
+        let chromaBytes = vImageScale_CbCr8(&chroma.source, &chroma.destination, nil, Self.flags | vImage_Flags(kvImageGetTempBufferSize))
+        try check(min(lumaBytes, chromaBytes), "scratch size")
+        scratch?.deallocate()
+        scratch = UnsafeMutableRawPointer.allocate(byteCount: max(lumaBytes, chromaBytes), alignment: 64)
+        scratchSourceSize = sourceSize
+    }
+
+    private func makeDestination() throws -> CVPixelBuffer {
+        if pool == nil {
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                kCVPixelBufferWidthKey as String: outputSize.width,
+                kCVPixelBufferHeightKey as String: outputSize.height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+            ]
+            CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool)
+        }
+        var buffer: CVPixelBuffer?
+        guard let pool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let buffer else {
+            throw MP4WriterError.scalingFailed(detail: "no buffer available in the resize pool")
+        }
+        return buffer
+    }
+
+    private func check(_ status: vImage_Error, _ step: String) throws {
+        guard status >= 0 else { throw MP4WriterError.scalingFailed(detail: "vImage \(step) error \(status)") }
+    }
 }

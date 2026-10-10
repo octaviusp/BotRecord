@@ -1,10 +1,11 @@
 import AppKit
 
-/// Owns the two toast panels: "saved" bottom-right, "failure" top-right.
+/// Owns the two toast panels: "saved" (recording or meeting) bottom-right, "failure" top-right.
 @MainActor
-final class ToastPresenter: RecordingOutcomePresenting {
+final class ToastPresenter: RecordingOutcomePresenting, MeetingOutcomePresenting {
     private var savedPanel: FloatingPanel?
     private var savedModel: SavedToastModel?
+    private var meetingModel: MeetingSavedToastModel?
     private var failurePanel: FloatingPanel?
     private var failureDismissHandler: (@MainActor () -> Void)?
 
@@ -16,6 +17,17 @@ final class ToastPresenter: RecordingOutcomePresenting {
         model.onDismiss = { [weak self] in self?.dismissSaved() }
         let panel = FloatingPanel(level: .statusBar) { SavedToastView(model: model) }
         savedModel = model
+        savedPanel = panel
+        panel.present(at: origin(for: panel.frame.size, atTop: false))
+        model.startAutoDismiss()
+    }
+
+    func presentMeetingSaved(_ meeting: SavedMeeting) {
+        dismissSaved()
+        let model = MeetingSavedToastModel(meeting: meeting)
+        model.onDismiss = { [weak self] in self?.dismissSaved() }
+        let panel = FloatingPanel(level: .statusBar) { MeetingSavedToastView(model: model) }
+        meetingModel = model
         savedPanel = panel
         panel.present(at: origin(for: panel.frame.size, atTop: false))
         model.startAutoDismiss()
@@ -39,6 +51,8 @@ final class ToastPresenter: RecordingOutcomePresenting {
     private func dismissSaved() {
         savedModel?.stopAutoDismiss()
         savedModel = nil
+        meetingModel?.stopAutoDismiss()
+        meetingModel = nil
         savedPanel?.dismissAnimated()
         savedPanel = nil
     }

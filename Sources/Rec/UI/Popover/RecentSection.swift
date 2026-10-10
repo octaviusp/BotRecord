@@ -1,9 +1,13 @@
 import AppKit
 import SwiftUI
 
+/// Recent screen recordings and meetings, newest first, with the summary card at the bottom.
 struct RecentSection: View {
     let recents: RecentRecordingsStore
-    let outputDirectory: URL
+    let summaries: SummaryController
+    let transcription: TranscriptionService
+    /// Opened by "Open folder ↗".
+    let folder: URL
 
     var body: some View {
         VStack(spacing: 4) {
@@ -23,19 +27,37 @@ struct RecentSection: View {
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, minHeight: 52)
             } else {
-                ForEach(recents.items) { RecentRow(recording: $0) }
+                ForEach(recents.items) { item in
+                    switch item {
+                    case let .screen(recording):
+                        RecentRow(recording: recording, transcript: status(recording.url, done: recording.hasTranscript))
+                    case let .meeting(meeting):
+                        RecentMeetingRow(meeting: meeting, transcript: status(meeting.folder, done: meeting.hasTranscript))
+                    }
+                }
+            }
+
+            // A summary of a transcript still being finalized would miss its last words.
+            if let meeting = recents.latestMeeting, !transcription.isTranscribing(meeting.folder),
+               summaries.offersSummary(for: meeting) {
+                SummaryCard(meeting: meeting, summaries: summaries)
+                    .padding(.top, 6)
             }
         }
     }
 
+    private func status(_ url: URL, done: Bool) -> TranscriptStatus {
+        transcription.isTranscribing(url) ? .transcribing : done ? .done : .off
+    }
+
     private func openFolder() {
         do {
-            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
             NSSound.beep()
             return
         }
-        NSWorkspace.shared.open(outputDirectory)
+        NSWorkspace.shared.open(folder)
     }
 }
 

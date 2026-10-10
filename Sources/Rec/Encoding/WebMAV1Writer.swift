@@ -28,7 +28,7 @@ final class WebMAV1Writer: MediaSink, @unchecked Sendable {
             video: .init(width: config.width, height: config.height,
                          codecPrivate: encoder.codecConfiguration,
                          nominalFrameDurationMilliseconds: Int64(1_000 / max(config.frameRate, 1))),
-            includesAudio: audio != nil)
+            audio: audio.map { [$0.opus.webMTrack()] } ?? [])
         encoder.start(
             onPacket: { [muxer, muxQueue, failure] packet in
                 muxQueue.async { Self.mux(failure) { try muxer.addVideo(packet) } }
@@ -43,14 +43,13 @@ final class WebMAV1Writer: MediaSink, @unchecked Sendable {
     }
 
     func appendAudio(_ sampleBuffer: CMSampleBuffer, source: AudioSource) throws {
-        try lifecycle.ensureRecording()
-        try failure.throwIfFailed()
-        guard let audio else { return }
-        let packets = try audioLock.withLock {
-            guard let mixed = try audio.pipeline.process(sampleBuffer, from: source) else { return [EncodedAudioPacket]() }
-            return try audio.opus.encode(mixed)
-        }
-        enqueueAudio(packets)
+        try appendMixable { try $0.process(sampleBuffer, from: source) }
+    }
+
+    /// Audio already converted to 48 kHz stereo on the recording timeline (e.g. a microphone
+    /// captured outside ScreenCaptureKit).
+    func appendAudio(_ chunk: StereoPCMChunk, source: AudioSource) throws {
+        try appendMixable { $0.process(chunk, from: source) }
     }
 
     func finish() async throws {
@@ -87,10 +86,21 @@ final class WebMAV1Writer: MediaSink, @unchecked Sendable {
         encoder.cancel(whenStopped: { [muxer] in muxer.abort() }, on: muxQueue)
     }
 
+    private func appendMixable(_ mix: (MixedAudioPipeline) throws -> StereoPCMChunk?) throws {
+        try lifecycle.ensureRecording()
+        try failure.throwIfFailed()
+        guard let audio else { return }
+        let packets = try audioLock.withLock {
+            guard let mixed = try mix(audio.pipeline) else { return [EncodedAudioPacket]() }
+            return try audio.opus.encode(mixed)
+        }
+        enqueueAudio(packets)
+    }
+
     private func enqueueAudio(_ packets: [EncodedAudioPacket]) {
         guard !packets.isEmpty else { return }
         muxQueue.async { [muxer, failure] in
-            Self.mux(failure) { for packet in packets { try muxer.addAudio(packet) } }
+            Self.mux(failure) { for packet in packets { try muxer.addAudio(packet, trackIndex: 0) } }
         }
     }
 

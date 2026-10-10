@@ -28,10 +28,13 @@ final class RecordingCoordinator {
     private let settings: AppSettings
     private let dependencies: AppDependencies
     private let recents: RecentRecordingsStore
+    private let transcription: TranscriptionService
     private let outcomes: RecordingOutcomePresenting
     private let permissionPrompt: PermissionPresenting
 
     private var activeOptions: RecordingOptions?
+    /// Listens to the recording's audio when "Transcript" is on; finished into files next to the video.
+    private var transcriber: LiveTranscriber?
     private var tickTask: Task<Void, Never>?
     private var confirmationTask: Task<Void, Never>?
 
@@ -42,12 +45,14 @@ final class RecordingCoordinator {
         settings: AppSettings,
         dependencies: AppDependencies,
         recents: RecentRecordingsStore,
+        transcription: TranscriptionService,
         outcomes: RecordingOutcomePresenting,
         permissionPrompt: PermissionPresenting
     ) {
         self.settings = settings
         self.dependencies = dependencies
         self.recents = recents
+        self.transcription = transcription
         self.outcomes = outcomes
         self.permissionPrompt = permissionPrompt
         dependencies.recorder.onFailure = { [weak self] failure in self?.handleFailure(failure) }
@@ -105,6 +110,7 @@ final class RecordingCoordinator {
         dependencies.hud.dismiss()
         Task {
             await dependencies.recorder.cancel()
+            endTranscript(savingNextTo: nil)
             phase = .idle
         }
     }
@@ -125,9 +131,13 @@ final class RecordingCoordinator {
             return
         }
         phase = .starting
+        let hasAudio = options.captureMicrophone || options.captureSystemAudio
+        transcriber = settings.transcribeRecordings && hasAudio ? transcription.startLive(output: nil) : nil
+        dependencies.recorder.audioObserver = transcriber
         do {
             try await dependencies.recorder.start(target: target, options: options)
         } catch {
+            endTranscript(savingNextTo: nil)
             fail(title: "Couldn't start recording", message: error.localizedDescription)
             return
         }
@@ -175,8 +185,28 @@ final class RecordingCoordinator {
         do {
             let result = try await dependencies.recorder.stop()
             complete(result)
+            endTranscript(savingNextTo: result.url)
         } catch {
+            endTranscript(savingNextTo: nil)
             fail(title: "Couldn't save the recording", message: error.localizedDescription)
+        }
+    }
+
+    /// Writes `<name>.md` and `<name>.vtt` next to the video in the background, or drops the transcript.
+    private func endTranscript(savingNextTo videoURL: URL?) {
+        dependencies.recorder.audioObserver = nil
+        guard let transcriber else { return }
+        self.transcriber = nil
+        guard let videoURL else { return transcription.cancel(transcriber) }
+        Task {
+            let outcome = await transcription.finish(transcriber, output: RecordingTranscriptFiles(videoURL: videoURL),
+                                                     trackedAs: videoURL)
+            recents.reload()
+            if let error = outcome.error {
+                outcomes.presentFailure(FailurePresentation(
+                    title: "Transcript incomplete", message: error.localizedDescription, partialResult: nil
+                ), onDismiss: {})
+            }
         }
     }
 
@@ -220,6 +250,7 @@ final class RecordingCoordinator {
         if let partial = failure.partialResult {
             Task { await recents.remember(partial) }
         }
+        endTranscript(savingNextTo: failure.partialResult?.url)
         let savedNote = failure.partialResult.map { " Your first \(Formatters.duration($0.duration)) is saved and safe." } ?? ""
         present(FailurePresentation(
             title: "Recording stopped",

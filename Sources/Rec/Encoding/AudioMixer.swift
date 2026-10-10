@@ -5,8 +5,8 @@ import Foundation
 final class AudioMixer {
     /// Jitter tolerated before a timestamp jump is treated as a gap (10 ms).
     private static let jitterToleranceFrames: Int64 = 480
-    /// A source more than 100 ms behind the leader is padded with silence so the mix keeps flowing.
-    private static let maxLagFrames: Int64 = 4_800
+    /// Default lag tolerance (100 ms): ScreenCaptureKit delivers all its sources with similar latency.
+    static let defaultMaxLagFrames: Int64 = 4_800
 
     private final class Track {
         var samples: [Float] = []
@@ -20,11 +20,14 @@ final class AudioMixer {
         }
     }
 
+    /// A source this far behind the leader is padded with silence so the mix keeps flowing.
+    private let maxLagFrames: Int64
     private var tracks: [AudioSource: Track] = [:]
     /// Everything before this frame has been emitted.
     private var mixedUntilFrame: Int64 = 0
 
-    init(sources: Set<AudioSource>) {
+    init(sources: Set<AudioSource>, maxLagFrames: Int64 = defaultMaxLagFrames) {
+        self.maxLagFrames = maxLagFrames
         for source in sources { tracks[source] = Track() }
     }
 
@@ -46,11 +49,19 @@ final class AudioMixer {
     /// Mixes every frame that all sources have reached.
     func drain() -> StereoPCMChunk? {
         guard let leaderEnd = tracks.values.map(\.endFrame).max() else { return nil }
-        for track in tracks.values where track.endFrame < leaderEnd - Self.maxLagFrames {
-            track.appendSilence(frames: leaderEnd - Self.maxLagFrames - track.endFrame)
+        for track in tracks.values where track.endFrame < leaderEnd - maxLagFrames {
+            track.appendSilence(frames: leaderEnd - maxLagFrames - track.endFrame)
         }
         let readyUntil = tracks.values.map(\.endFrame).min() ?? mixedUntilFrame
         return mix(until: readyUntil)
+    }
+
+    /// Pads every source that has not reached `frame` with silence and mixes up to it. Lets the output
+    /// keep flowing when a source delivers nothing (ScreenCaptureKit sends no buffers while apps are
+    /// silent); later data for padded time is dropped as late, so `frame` must trail real delivery.
+    func advance(to frame: Int64) -> StereoPCMChunk? {
+        for track in tracks.values { track.appendSilence(frames: frame - track.endFrame) }
+        return drain()
     }
 
     /// Pads every source to the longest one and mixes the rest. Call once at the end.

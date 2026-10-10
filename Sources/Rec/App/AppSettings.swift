@@ -7,6 +7,8 @@ import ServiceManagement
 final class AppSettings {
     static let defaultOutputDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Movies/general/screen-recordings", isDirectory: true)
+    static let defaultLibraryDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Documents/work/rec-library", isDirectory: true)
 
     var mode: CaptureMode { didSet { persist(mode, Key.mode) } }
     var resolution: VideoResolution { didSet { persist(resolution, Key.resolution) } }
@@ -21,6 +23,19 @@ final class AppSettings {
     var showPreview: Bool { didSet { defaults.set(showPreview, forKey: Key.showPreview) } }
     var autoCopy: Bool { didSet { defaults.set(autoCopy, forKey: Key.autoCopy) } }
     var outputDirectory: URL { didSet { defaults.set(outputDirectory.path, forKey: Key.outputDirectory) } }
+
+    /// Meeting is a third popover mode; `mode` keeps the last screen mode so ⌃⌥⌘R still records the screen.
+    var isMeetingModeSelected: Bool { didSet { defaults.set(isMeetingModeSelected, forKey: Key.meetingModeSelected) } }
+    var libraryDirectory: URL { didSet { defaults.set(libraryDirectory.path, forKey: Key.libraryDirectory) } }
+    var meetingCaptureMicrophone: Bool { didSet { defaults.set(meetingCaptureMicrophone, forKey: Key.meetingCaptureMicrophone) } }
+    var meetingEchoCancellation: EchoCancellationMode { didSet { persist(meetingEchoCancellation, Key.meetingEchoCancellationMode) } }
+    var meetingRecordScreen: Bool { didSet { defaults.set(meetingRecordScreen, forKey: Key.meetingRecordScreen) } }
+
+    /// Smart transcript: live on-device transcription (needs the downloaded model).
+    var meetingTranscribe: Bool { didSet { defaults.set(meetingTranscribe, forKey: Key.meetingTranscribe) } }
+    /// Screen recordings with audio also get `<name>.md` and `<name>.vtt` next to the video.
+    var transcribeRecordings: Bool { didSet { defaults.set(transcribeRecordings, forKey: Key.transcribeRecordings) } }
+    var transcriptLanguage: TranscriptionLanguage { didSet { persist(transcriptLanguage, Key.transcriptLanguage) } }
 
     private(set) var launchAtLogin: Bool
     private(set) var launchAtLoginError: String?
@@ -46,7 +61,43 @@ final class AppSettings {
         autoCopy = defaults.object(forKey: Key.autoCopy) as? Bool ?? false
         outputDirectory = defaults.string(forKey: Key.outputDirectory)
             .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultOutputDirectory
+        isMeetingModeSelected = defaults.bool(forKey: Key.meetingModeSelected)
+        libraryDirectory = defaults.string(forKey: Key.libraryDirectory)
+            .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultLibraryDirectory
+        meetingCaptureMicrophone = defaults.object(forKey: Key.meetingCaptureMicrophone) as? Bool ?? true
+        // The on/off toggle that preceded the mode becomes Auto, the new default.
+        defaults.removeObject(forKey: Key.legacyMeetingEchoCancellation)
+        meetingEchoCancellation = defaults.enumValue(Key.meetingEchoCancellationMode, default: .auto)
+        meetingRecordScreen = defaults.object(forKey: Key.meetingRecordScreen) as? Bool ?? false
+        meetingTranscribe = defaults.object(forKey: Key.meetingTranscribe) as? Bool ?? true
+        transcribeRecordings = defaults.object(forKey: Key.transcribeRecordings) as? Bool ?? false
+        transcriptLanguage = defaults.enumValue(Key.transcriptLanguage, default: .spanish)
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    /// The popover's three tiles.
+    var recorderMode: RecorderMode {
+        get { isMeetingModeSelected ? .meeting : RecorderMode(mode) }
+        set {
+            isMeetingModeSelected = newValue == .meeting
+            if let captureMode = newValue.captureMode { mode = captureMode }
+        }
+    }
+
+    var library: MeetingLibrary { MeetingLibrary(root: libraryDirectory) }
+
+    /// Snapshot for one meeting; the optional screen video always uses WebM · AV1, as `video.webm`.
+    /// Echo cancellation is resolved against the output device in use right now.
+    func meetingOptions(folder: URL) -> MeetingOptions {
+        var screen = recordingOptions
+        screen.format = .webmAV1
+        screen.outputDirectory = folder
+        return MeetingOptions(
+            captureMicrophone: meetingCaptureMicrophone,
+            echoCancellation: meetingCaptureMicrophone && meetingEchoCancellation.isEnabled(for: AudioOutputRoute.current()),
+            screen: meetingRecordScreen ? screen : nil,
+            folder: folder
+        )
     }
 
     /// Formats offered in pickers; MP4 · AV1 appears only where the system can write it.
@@ -107,6 +158,15 @@ final class AppSettings {
         static let showPreview = "showPreview"
         static let autoCopy = "autoCopy"
         static let outputDirectory = "outputDirectory"
+        static let meetingModeSelected = "meetingModeSelected"
+        static let libraryDirectory = "libraryDirectory"
+        static let meetingCaptureMicrophone = "meetingCaptureMicrophone"
+        static let legacyMeetingEchoCancellation = "meetingEchoCancellation"
+        static let meetingEchoCancellationMode = "meetingEchoCancellationMode"
+        static let meetingRecordScreen = "meetingRecordScreen"
+        static let meetingTranscribe = "meetingTranscribe"
+        static let transcribeRecordings = "transcribeRecordings"
+        static let transcriptLanguage = "transcriptLanguage"
     }
 }
 

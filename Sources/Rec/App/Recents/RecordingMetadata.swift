@@ -22,6 +22,8 @@ struct RecentRecording: Identifiable {
     /// Nil for files recorded elsewhere or before metadata existed.
     let metadata: RecordingMetadata?
     let thumbnail: NSImage?
+    /// `<name>.md` exists next to the video.
+    let hasTranscript: Bool
 
     var id: URL { url }
 }

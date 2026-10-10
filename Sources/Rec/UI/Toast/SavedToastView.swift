@@ -104,16 +104,28 @@ struct SavedToastView: View {
         }
     }
 
+    /// Under the MP4 button, so the hint arrives where the eye already is. It takes the drag hint's row
+    /// instead of adding one: the panel is sized once, when it opens.
     private var footer: some View {
         HStack(spacing: 8) {
-            Image(systemName: "hand.draw").font(.system(size: 10))
-            Text("Drag the preview into any app").font(.system(size: 10.5))
+            if model.mp4State == .copied {
+                Text("En WhatsApp elegí HD o enviá como Documento para texto nítido")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .transition(.opacity)
+            } else {
+                Image(systemName: "hand.draw").font(.system(size: 10))
+                Text("Drag the preview into any app").font(.system(size: 10.5))
+            }
             Spacer(minLength: 0)
-            ToastProgressLine(remaining: 1 - model.elapsedFraction).frame(width: 44)
+            ToastProgressLine(remaining: 1 - model.elapsedFraction).frame(width: model.mp4State == .copied ? 28 : 44)
         }
         .foregroundStyle(.tertiary)
         .padding(.horizontal, 4)
         .padding(.bottom, 2)
+        .animation(.snappy(duration: 0.2), value: model.mp4State)
     }
 }
 

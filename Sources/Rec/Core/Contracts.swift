@@ -20,6 +20,8 @@ protocol ScreenRecording: AnyObject {
     var elapsed: TimeInterval { get }
     /// Called on the main actor when recording dies mid-way; the partial file is already finalized.
     var onFailure: ((RecordingFailure) -> Void)? { get set }
+    /// Receives the recorded audio (all sources mixed) for live transcription; read at `start`.
+    var audioObserver: LiveAudioObserver? { get set }
 
     func start(target: CaptureTarget, options: RecordingOptions) async throws
     func pause()
@@ -66,6 +68,7 @@ protocol RecordingHUDPresenting: AnyObject {
 @MainActor
 struct AppDependencies {
     let recorder: ScreenRecording
+    let meetingRecorder: MeetingRecording
     let areaSelector: AreaSelecting
     let countdown: CountdownPresenting
     let hud: RecordingHUDPresenting

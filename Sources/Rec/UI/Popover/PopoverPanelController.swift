@@ -7,7 +7,10 @@ import SwiftUI
 final class PopoverPanelController {
     private let panel: FloatingPanel
     private let recents: RecentRecordingsStore
+    private let settings: AppSettings
     private weak var anchorButton: NSStatusBarButton?
+    /// Top edge under the menu bar; content height changes keep it fixed.
+    private var anchorTop: CGFloat?
     private var outsideClickMonitor: Any?
     private var lastClosedAt = Date.distantPast
 
@@ -21,27 +24,33 @@ final class PopoverPanelController {
 
     init(
         settings: AppSettings,
-        coordinator: RecordingCoordinator,
+        sessions: CaptureSessions,
         recents: RecentRecordingsStore,
         onOpenSettings: @escaping () -> Void
     ) {
         self.recents = recents
+        self.settings = settings
         // Wired after `panel` exists: the view needs to close the panel, and `self` can't be captured before init finishes.
         var closeAndRecord: () -> Void = {}
         var closeAndOpenSettings: () -> Void = {}
+        var refit: () -> Void = {}
         panel = FloatingPanel(level: .popUpMenu, acceptsKeyFocus: true) {
             PopoverView(
                 settings: settings,
-                coordinator: coordinator,
+                sessions: sessions,
                 recents: recents,
                 onRecord: { closeAndRecord() },
-                onOpenSettings: { closeAndOpenSettings() }
+                onOpenSettings: { closeAndOpenSettings() },
+                onContentSizeChange: { refit() }
             )
         }
         closeAndRecord = { [weak self] in
             // Close first so the popover is never in the shot.
             self?.close()
-            coordinator.startRecording(mode: settings.mode)
+            sessions.start(settings.recorderMode)
+        }
+        refit = { [weak self] in
+            DispatchQueue.main.async { self?.refitIfContentChanged() }
         }
         closeAndOpenSettings = { [weak self] in
             self?.close()
@@ -76,7 +85,9 @@ final class PopoverPanelController {
         anchorButton = button
         recents.reload()
         let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
-        let origin = origin(for: fittedSize(), below: buttonFrame)
+        let size = fittedSize()
+        let origin = origin(for: size, below: buttonFrame)
+        anchorTop = origin.y + size.height
         panel.present(at: origin, slidingFrom: 6)
         panel.makeKey()
         button.highlight(true)
@@ -100,14 +111,15 @@ final class PopoverPanelController {
         return NSPoint(x: x, y: buttonFrame.minY - Self.gapBelowMenuBar - size.height)
     }
 
-    /// Keeps the top edge under the menu bar when the content height changes after showing.
+    /// Keeps the top edge under the menu bar when the content height changes after showing
+    /// (reloaded recents, switching mode, the summary card changing state).
     private func refitIfContentChanged() {
-        guard panel.isVisible else { return }
+        guard panel.isVisible, let anchorTop else { return }
         let oldFrame = panel.frame
         let size = fittedSize()
         guard abs(size.height - oldFrame.height) > 0.5 else { return }
         panel.setFrame(
-            NSRect(x: oldFrame.minX, y: oldFrame.maxY - size.height, width: size.width, height: size.height),
+            NSRect(x: oldFrame.minX, y: anchorTop - size.height, width: size.width, height: size.height),
             display: true
         )
     }

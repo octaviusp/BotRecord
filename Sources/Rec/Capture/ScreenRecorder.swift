@@ -8,6 +8,7 @@ final class ScreenRecorder: ScreenRecording {
     private enum Phase { case idle, starting, recording, finishing }
 
     var onFailure: ((RecordingFailure) -> Void)?
+    var audioObserver: LiveAudioObserver?
 
     private var phase = Phase.idle
     private var active: ActiveRecording?
@@ -50,9 +51,10 @@ final class ScreenRecorder: ScreenRecording {
             display: display, sourceRect: target.sourceRect, excluding: ownApplications, options: options
         )
         let sinks = try RecordingSinks.make(options: options, outputSize: setup.outputSize)
+        let transcription = makeTranscriptionSink(sources: sinks.encodeConfig.audioSources)
         let clock = RecordingClock()
         let handler = CaptureSampleHandler(
-            sinks: sinks.all, clock: clock, frameRate: options.frameRate.rawValue
+            sinks: sinks.all + [transcription].compactMap { $0 }, clock: clock, frameRate: options.frameRate.rawValue
         ) { [weak self] error in
             Task { @MainActor in await self?.handleFailure(error) }
         }
@@ -71,7 +73,19 @@ final class ScreenRecorder: ScreenRecording {
             sinks.cancelAll()
             throw error
         }
-        return ActiveRecording(stream: stream, handler: handler, sinks: sinks, clock: clock, pixelSize: setup.outputSize)
+        return ActiveRecording(stream: stream, handler: handler, sinks: sinks, transcription: transcription,
+                               clock: clock, pixelSize: setup.outputSize)
+    }
+
+    /// A transcript needs audio and a listener; failing to set one up never stops the recording.
+    private func makeTranscriptionSink(sources: Set<AudioSource>) -> TranscriptionSink? {
+        guard let audioObserver, !sources.isEmpty else { return nil }
+        do {
+            return try TranscriptionSink(sources: sources, observer: audioObserver)
+        } catch {
+            captureLog.error("Recording without a transcript: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     // MARK: Pause / resume
@@ -93,6 +107,7 @@ final class ScreenRecorder: ScreenRecording {
 
         let thumbnail = await recording.halt(at: RecordingClock.hostNow, extendingTimeline: true)
         let outcome = await recording.sinks.finishAll()
+        await recording.transcription?.finish()
         if case .failure(let error) = outcome.main {
             if let companion = recording.sinks.companion { OutputFiles.removeIfPresent(companion.url) }
             throw error
@@ -118,6 +133,7 @@ final class ScreenRecorder: ScreenRecording {
 
         let thumbnail = await recording.halt(at: RecordingClock.hostNow, extendingTimeline: false)
         let outcome = await recording.sinks.finishAll()
+        await recording.transcription?.finish()
         let partialResult = partialResult(from: recording, outcome: outcome, thumbnail: thumbnail)
         reset()
         onFailure?(RecordingFailure(message: FailureMessage.describe(error), underlying: error, partialResult: partialResult))

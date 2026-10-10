@@ -28,3 +28,16 @@ protocol RecordingOutcomePresenting: AnyObject {
 protocol PermissionPresenting: AnyObject {
     func presentPermissionRequest()
 }
+
+/// A finished meeting, announced as "Meeting saved · 42:10".
+struct SavedMeeting {
+    let folder: URL
+    let duration: TimeInterval
+}
+
+@MainActor
+protocol MeetingOutcomePresenting: AnyObject {
+    func presentMeetingSaved(_ meeting: SavedMeeting)
+    func presentFailure(_ failure: FailurePresentation, onDismiss: @escaping @MainActor () -> Void)
+    func dismissAll()
+}

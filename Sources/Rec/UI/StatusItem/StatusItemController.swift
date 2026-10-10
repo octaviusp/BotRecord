@@ -8,15 +8,16 @@ import SwiftUI
 final class StatusItemController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let labelView = PassthroughHostingView(rootView: StatusLabelView(display: .idle))
-    private let coordinator: RecordingCoordinator
+    private let display: () -> StatusDisplay
     private let onClick: () -> Void
 
     private static let horizontalInset: CGFloat = 6
 
     var button: NSStatusBarButton? { statusItem.button }
 
-    init(coordinator: RecordingCoordinator, onClick: @escaping () -> Void) {
-        self.coordinator = coordinator
+    /// `display` reads observable state, so any change it depends on re-renders the item.
+    init(display: @escaping () -> StatusDisplay, onClick: @escaping () -> Void) {
+        self.display = display
         self.onClick = onClick
         super.init()
         installLabel()
@@ -39,10 +40,10 @@ final class StatusItemController: NSObject {
         ])
     }
 
-    /// Re-renders whenever the coordinator's displayed state changes.
+    /// Re-renders whenever the displayed state changes.
     private func trackState() {
         withObservationTracking {
-            apply(coordinator.statusDisplay)
+            apply(display())
         } onChange: { [weak self] in
             Task { @MainActor in self?.trackState() }
         }

@@ -7,6 +7,8 @@ struct ActiveRecording {
     let stream: SCStream
     let handler: CaptureSampleHandler
     let sinks: RecordingSinks
+    /// Present when the recording has audio and a live transcriber listens.
+    let transcription: TranscriptionSink?
     let clock: RecordingClock
     let pixelSize: CaptureGeometry.PixelSize
 

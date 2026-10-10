@@ -1,7 +1,7 @@
 import CoreMedia
 import os
 
-/// Maps ScreenCaptureKit host-clock timestamps onto recording time: zero at the first video frame,
+/// Maps host-clock timestamps onto recording time: zero at the first video frame (or `startTimeline`),
 /// with paused spans removed. Shared between the main actor (pause/resume/elapsed) and the capture queue.
 final class RecordingClock: @unchecked Sendable {
     private struct State {
@@ -17,6 +17,14 @@ final class RecordingClock: @unchecked Sendable {
     static var hostNow: CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
 
     var isPaused: Bool { state.withLock { $0.pauseStart != nil } }
+
+    /// Fixes time zero explicitly, for recordings whose timeline starts before any video frame
+    /// (meetings start with audio). No effect once a frame already set it.
+    func startTimeline(at now: CMTime) {
+        state.withLock { state in
+            if state.origin == nil { state.origin = now }
+        }
+    }
 
     func pause(at now: CMTime) {
         state.withLock { state in

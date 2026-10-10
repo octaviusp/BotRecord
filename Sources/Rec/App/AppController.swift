@@ -5,10 +5,11 @@ import AppKit
 final class AppController {
     private let settings = AppSettings()
     private let recents: RecentRecordingsStore
+    private let transcription: TranscriptionService
     private let toasts = ToastPresenter()
     private let permissionWindow = PermissionWindowController()
     private let settingsWindow: SettingsWindowController
-    private let coordinator: RecordingCoordinator
+    private let sessions: CaptureSessions
     private let popover: PopoverPanelController
     private let hotKeys = HotKeys()
     private var statusItem: StatusItemController?
@@ -16,21 +17,37 @@ final class AppController {
     init(dependencies: AppDependencies) {
         let recents = RecentRecordingsStore(settings: settings)
         let permissionWindow = permissionWindow
+        let transcription = TranscriptionService(settings: settings, models: TranscriptionModelStore())
         self.recents = recents
-        settingsWindow = SettingsWindowController(settings: settings) {
+        self.transcription = transcription
+        settingsWindow = SettingsWindowController(settings: settings, transcription: transcription) {
             ScreenCapturePermission.request()
             permissionWindow.presentPermissionRequest()
         }
-        coordinator = RecordingCoordinator(
-            settings: settings,
-            dependencies: dependencies,
-            recents: recents,
-            outcomes: toasts,
-            permissionPrompt: permissionWindow
+        sessions = CaptureSessions(
+            screen: RecordingCoordinator(
+                settings: settings,
+                dependencies: dependencies,
+                recents: recents,
+                transcription: transcription,
+                outcomes: toasts,
+                permissionPrompt: permissionWindow
+            ),
+            meeting: MeetingCoordinator(
+                settings: settings,
+                recorder: dependencies.meetingRecorder,
+                hud: dependencies.hud,
+                recents: recents,
+                transcription: transcription,
+                outcomes: toasts,
+                permissionPrompt: permissionWindow
+            ),
+            summaries: SummaryController(settings: settings, recents: recents, summarizer: ClaudeCodeSummarizer()),
+            transcription: transcription
         )
         popover = PopoverPanelController(
             settings: settings,
-            coordinator: coordinator,
+            sessions: sessions,
             recents: recents,
             onOpenSettings: { [settingsWindow] in settingsWindow.show() }
         )
@@ -41,23 +58,22 @@ final class AppController {
         ProcessInfo.processInfo.disableAutomaticTermination("Rec lives in the menu bar")
         CompanionCache.purgeExpired()
         recents.reload()
+        transcription.warmUpIfEnabled()
         registerHotKeys()
-        statusItem = StatusItemController(coordinator: coordinator) { [weak self] in self?.statusItemClicked() }
-    }
-
-    private func statusItemClicked() {
-        switch coordinator.phase {
-        case .recording: coordinator.stop()
-        case .paused: coordinator.resume()
-        case .idle, .failed:
-            if let button = statusItem?.button { popover.toggle(below: button) }
-        case .selectingArea, .countdown, .starting, .saving, .discarding: break
+        statusItem = StatusItemController(display: { [sessions] in sessions.statusDisplay }) { [weak self] in
+            self?.statusItemClicked()
         }
     }
 
+    private func statusItemClicked() {
+        guard !sessions.handleStatusItemClick(), let button = statusItem?.button else { return }
+        popover.toggle(below: button)
+    }
+
     private func registerHotKeys() {
-        register(.toggleRecording) { [coordinator] in coordinator.toggleRecording() }
-        register(.recordArea) { [coordinator] in coordinator.startRecording(mode: .area) }
+        register(.toggleRecording) { [sessions] in sessions.toggleScreenRecording() }
+        register(.recordArea) { [sessions] in sessions.startScreenRecording(mode: .area) }
+        register(.toggleMeeting) { [sessions] in sessions.toggleMeeting() }
     }
 
     /// One failing shortcut must not disable the other, and the user needs to know which one is taken.

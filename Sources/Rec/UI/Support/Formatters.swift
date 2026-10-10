@@ -12,6 +12,11 @@ enum Formatters {
             : String(format: "%d:%02d", minutes, seconds)
     }
 
+    /// 0.423 → "42%", rounded down so 100% only shows when done.
+    static func percent(_ fraction: Double) -> String {
+        "\(Int(max(0, min(fraction, 1)) * 100))%"
+    }
+
     static func fileSize(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }

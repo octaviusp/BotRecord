@@ -38,7 +38,7 @@ struct RecordingSinks {
 
         do {
             let companionURL = try OutputNaming.companionURL(forMainOutput: mainURL)
-            let companionSink = try MP4Writer(url: companionURL, config: config, includeAudio: true)
+            let companionSink = try MP4Writer(url: companionURL, config: config, includeAudio: true, purpose: .chatCopy)
             return RecordingSinks(
                 main: SinkOutput(sink: mainSink, url: mainURL),
                 companion: SinkOutput(sink: companionSink, url: companionURL),

@@ -1,34 +1,52 @@
 import SwiftUI
 
-/// The recorder popover: choose mode and quality, press the big red button.
+/// The recorder popover: choose a mode and its options, press the big red button.
 struct PopoverView: View {
     @Bindable var settings: AppSettings
-    let coordinator: RecordingCoordinator
+    let sessions: CaptureSessions
     let recents: RecentRecordingsStore
     let onRecord: () -> Void
     let onOpenSettings: () -> Void
+    /// Rows change with the mode and the summary card grows; the panel re-anchors under the menu bar.
+    let onContentSizeChange: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
-            PopoverHeader(isFailed: coordinator.phase == .failed, onOpenSettings: onOpenSettings)
-            ModeTiles(selection: $settings.mode)
-            optionRows
+            PopoverHeader(isFailed: sessions.isFailed, onOpenSettings: onOpenSettings)
+            ModeTiles(selection: $settings.recorderMode)
+            if settings.recorderMode == .meeting {
+                MeetingOptionRows(settings: settings,
+                                  transcription: sessions.transcription, onOpenSettings: onOpenSettings)
+            } else {
+                screenOptionRows
+            }
             RecordButton(title: recordTitle, action: onRecord)
             shortcutHint
             Divider().opacity(0.5)
-            RecentSection(recents: recents, outputDirectory: settings.outputDirectory)
-            PopoverFooter(outputDirectory: settings.outputDirectory)
+            RecentSection(recents: recents, summaries: sessions.summaries, transcription: sessions.transcription,
+                          folder: browsedFolder)
+            PopoverFooter(outputDirectory: browsedFolder)
         }
         .padding(14)
         .frame(width: Theme.popoverWidth)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous))
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { _ in onContentSizeChange() }
     }
 
     private var recordTitle: String {
-        settings.mode == .fullScreen ? "Record full screen" : "Select area & record"
+        switch settings.recorderMode {
+        case .fullScreen: "Record full screen"
+        case .area: "Select area & record"
+        case .meeting: "Start meeting notes"
+        }
     }
 
-    private var optionRows: some View {
+    /// The folder that "Open folder" and the footer point at: the library while in meeting mode.
+    private var browsedFolder: URL {
+        settings.recorderMode == .meeting ? settings.libraryDirectory : settings.outputDirectory
+    }
+
+    private var screenOptionRows: some View {
         VStack(spacing: 2) {
             OptionRow(icon: "arrow.up.left.and.arrow.down.right", title: "Quality") {
                 PillSegmented(
@@ -50,12 +68,17 @@ struct PopoverView: View {
             }
             ToggleRow(icon: "mic", title: "Microphone", isOn: $settings.captureMicrophone)
             ToggleRow(icon: "speaker.wave.2", title: "System audio", isOn: $settings.captureSystemAudio)
+            if settings.captureMicrophone || settings.captureSystemAudio {
+                TranscriptOptionRow(isOn: $settings.transcribeRecordings, transcription: sessions.transcription,
+                                    onOpenSettings: onOpenSettings)
+            }
         }
     }
 
     private var shortcutHint: some View {
-        HStack(spacing: 8) {
-            KeyCaps(keys: GlobalShortcut.toggleRecording.keyCaps, compact: true)
+        let shortcut: GlobalShortcut = settings.recorderMode == .meeting ? .toggleMeeting : .toggleRecording
+        return HStack(spacing: 8) {
+            KeyCaps(keys: shortcut.keyCaps, compact: true)
             Text("start / stop from anywhere")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)

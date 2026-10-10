@@ -9,6 +9,9 @@ enum CaptureError: LocalizedError {
     case invalidCaptureRegion
     case alreadyRecording
     case notRecording
+    case microphonePermissionDenied
+    case microphoneUnavailable
+    case microphoneLost
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +25,12 @@ enum CaptureError: LocalizedError {
             "A recording is already in progress."
         case .notRecording:
             "There is no recording in progress."
+        case .microphonePermissionDenied:
+            "Microphone access is denied. Allow Rec in System Settings > Privacy & Security > Microphone, or turn off the microphone."
+        case .microphoneUnavailable:
+            "No microphone is available."
+        case .microphoneLost:
+            "The microphone disconnected and no other input device took over."
         }
     }
 }

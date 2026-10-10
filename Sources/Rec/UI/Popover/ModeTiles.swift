@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Full screen / Area switch drawn as two large tiles.
+/// Full screen / Area / Meeting switch drawn as three large tiles.
 struct ModeTiles: View {
-    @Binding var selection: CaptureMode
+    @Binding var selection: RecorderMode
     @Namespace private var selectionNamespace
 
     var body: some View {
@@ -10,13 +10,14 @@ struct ModeTiles: View {
             HStack(spacing: 4) {
                 tile(.fullScreen, title: "Full screen", symbol: "display")
                 tile(.area, title: "Area", symbol: "rectangle.dashed")
+                tile(.meeting, title: "Meeting", symbol: "person.2.wave.2")
             }
         }
         .padding(4)
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.primary.opacity(0.07)))
     }
 
-    private func tile(_ mode: CaptureMode, title: String, symbol: String) -> some View {
+    private func tile(_ mode: RecorderMode, title: String, symbol: String) -> some View {
         let isSelected = mode == selection
         return Button {
             withAnimation(.snappy(duration: 0.22)) { selection = mode }

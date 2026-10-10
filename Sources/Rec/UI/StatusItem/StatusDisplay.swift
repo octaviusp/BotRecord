@@ -19,6 +19,7 @@ enum StatusDisplay: Equatable {
         case .countdown: "Starting soon, Esc to cancel"
         case .recording: "Recording: click to stop"
         case .paused: "Paused: click to resume"
+        case .busy("Resumen"): "Writing the meeting summary: click to open Rec"
         case .busy: "Finishing the file"
         case .error: "Something went wrong: click to open Rec"
         case .copied: "Copied to clipboard"
@@ -39,5 +40,29 @@ extension RecordingCoordinator {
         case .discarding: .busy(nil)
         case .failed: .error
         }
+    }
+}
+
+extension MeetingCoordinator {
+    var statusDisplay: StatusDisplay {
+        switch phase {
+        case .idle: .idle
+        case .starting: .recording(Formatters.duration(0))
+        case .recording: .recording(Formatters.duration(TimeInterval(elapsedSeconds)))
+        case .paused: .paused(Formatters.duration(TimeInterval(elapsedSeconds)))
+        case .saving: .busy("Saving")
+        case .discarding: .busy(nil)
+        case .failed: .error
+        }
+    }
+}
+
+extension CaptureSessions {
+    /// A live meeting wins, then the screen recorder; a running summary shows only when nothing records.
+    var statusDisplay: StatusDisplay {
+        if meeting.phase != .idle { return meeting.statusDisplay }
+        let screenDisplay = screen.statusDisplay
+        if screenDisplay == .idle, summaries.isRunning { return .busy("Resumen") }
+        return screenDisplay
     }
 }
