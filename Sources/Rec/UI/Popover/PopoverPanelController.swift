@@ -11,14 +11,12 @@ final class PopoverPanelController {
     private weak var anchorButton: NSStatusBarButton?
     /// Top edge under the menu bar; content height changes keep it fixed.
     private var anchorTop: CGFloat?
+    /// Closes on clicks in other apps, like a menu. Focus loss alone doesn't close it: starting the summary
+    /// launches Claude Code, whose keychain read can briefly take key focus and used to dismiss the panel.
     private var outsideClickMonitor: Any?
-    private var lastClosedAt = Date.distantPast
 
     private static let gapBelowMenuBar: CGFloat = 6
     private static let screenMargin: CGFloat = 8
-    /// A click on the status item first dismisses the panel (focus loss), then fires its action;
-    /// without this guard that click would immediately reopen it.
-    private static let reopenGuardInterval: TimeInterval = 0.25
 
     var isVisible: Bool { panel.isVisible }
 
@@ -57,24 +55,18 @@ final class PopoverPanelController {
             onOpenSettings()
         }
         panel.onCancel = { [weak self] in self?.close() }
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
-        }
     }
 
     func toggle(below button: NSStatusBarButton) {
         if panel.isVisible {
             close()
-        } else if Date().timeIntervalSince(lastClosedAt) > Self.reopenGuardInterval {
+        } else {
             show(below: button)
         }
     }
 
     func close() {
         guard panel.isVisible else { return }
-        lastClosedAt = Date()
         panel.orderOut(nil)
         anchorButton?.highlight(false)
         removeOutsideClickMonitor()
