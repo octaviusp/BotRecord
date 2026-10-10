@@ -24,7 +24,12 @@ struct SpeechSegmenter {
     private static let onsetFrames = 3
     /// 700 ms of silence ends an utterance: longer than a pause between words, shorter than a turn change.
     private static let hangoverFrames = 35
-    /// Long monologues are cut so segments keep streaming to disk and timestamps stay useful.
+    /// Past this length a short pause is enough to end an utterance, so long monologues split at a breath
+    /// instead of running into the hard cut.
+    private static let softLimitSeconds: TimeInterval = 15
+    /// 200 ms: a breath between sentences.
+    private static let softHangoverFrames = 10
+    /// Hard cut so segments keep streaming to disk and timestamps stay useful.
     private static let maxUtteranceSeconds: TimeInterval = 30
     /// Quieter than this is never speech, whatever the noise floor (digital silence sits far below).
     private static let minimumSpeechDB: Float = -50
@@ -95,14 +100,21 @@ struct SpeechSegmenter {
             open.silentFrames += 1
         }
         utterance = open
-        let endsInSilence = open.silentFrames >= Self.hangoverFrames
-        guard endsInSilence || end - open.start >= Self.maxUtteranceSeconds else { return [] }
+        let length = end - open.start
+        let hangover = length >= Self.softLimitSeconds ? Self.softHangoverFrames : Self.hangoverFrames
+        let endsInSilence = open.silentFrames >= hangover
+        guard endsInSilence || length >= Self.maxUtteranceSeconds else { return [] }
 
-        let events: [Event] = [.audio(audio), .ended(at: endsInSilence ? open.lastSpeechEnd : end)]
+        var events: [Event] = [.audio(audio), .ended(at: endsInSilence ? open.lastSpeechEnd : end)]
         audio.removeAll()
         utterance = nil
-        // After a forced cut the recent audio is speech already transcribed: priming with it would repeat words.
-        if !endsInSilence { recent.removeAll() }
+        if !endsInSilence {
+            // A hard cut lands mid-speech: continue in a new utterance right away so no words fall between them.
+            // Its lead-in stays empty because the recent audio was already transcribed (priming would repeat words).
+            recent.removeAll()
+            utterance = (start: end, lastSpeechEnd: end, silentFrames: 0)
+            events.append(.began(onset: end, leadIn: []))
+        }
         return events
     }
 
