@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- BotRecord app icon. Apple macOS grid: 824 px squircle body centered on a 1024 canvas.
+       A glass speech bubble (meeting notes) holding a live REC dot (recorder) and a voice waveform (transcript). -->
+  <defs>
+    <linearGradient id="bg" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#3A2A9E"/>
+      <stop offset="0.55" stop-color="#1B1F5E"/>
+      <stop offset="1" stop-color="#0B0F2E"/>
+    </linearGradient>
+    <radialGradient id="glowWarm" cx="0.86" cy="0.92" r="0.62">
+      <stop offset="0" stop-color="#FF7A45" stop-opacity="0.95"/>
+      <stop offset="0.45" stop-color="#D4457F" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#D4457F" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowCool" cx="0.12" cy="0.08" r="0.55">
+      <stop offset="0" stop-color="#4F8BFF" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#4F8BFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.28"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#E4E8FF" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="bubbleSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="rec" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FF8A7A"/>
+      <stop offset="0.55" stop-color="#FF3B30"/>
+      <stop offset="1" stop-color="#C81E14"/>
+    </radialGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5B5BFF"/>
+      <stop offset="1" stop-color="#9B4DFF"/>
+    </linearGradient>
+    <filter id="drop" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="bubbleShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="22" stdDeviation="26" flood-color="#060A2A" flood-opacity="0.55"/>
+    </filter>
+    <filter id="recGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <clipPath id="body"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+  </defs>
+
+  <!-- Squircle body -->
+  <g filter="url(#drop)">
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  </g>
+  <g clip-path="url(#body)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#glowWarm)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#glowCool)"/>
+  </g>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="184.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+
+  <!-- Speech bubble (glass) -->
+  <g filter="url(#bubbleShadow)">
+    <path d="M300 300 H724 A96 96 0 0 1 820 396 V604 A96 96 0 0 1 724 700 H452 L356 778 C348 784 338 778 340 768 L352 700 H300 A96 96 0 0 1 204 604 V396 A96 96 0 0 1 300 300 Z"
+          fill="url(#bubble)"/>
+  </g>
+  <path d="M300 306 H724 A90 90 0 0 1 814 396 V470 H210 V396 A90 90 0 0 1 300 306 Z" fill="url(#bubbleSheen)" opacity="0.55"/>
+
+  <!-- Live REC dot -->
+  <circle cx="378" cy="500" r="74" fill="#FF3B30" opacity="0.55" filter="url(#recGlow)"/>
+  <circle cx="378" cy="500" r="64" fill="url(#rec)"/>
+  <circle cx="358" cy="478" r="18" fill="#FFFFFF" opacity="0.45"/>
+
+  <!-- Voice waveform -->
+  <g fill="url(#wave)">
+    <rect x="490" y="462" width="34" height="76" rx="17"/>
+    <rect x="550" y="414" width="34" height="172" rx="17"/>
+    <rect x="610" y="440" width="34" height="120" rx="17"/>
+    <rect x="670" y="390" width="34" height="220" rx="17"/>
+    <rect x="730" y="452" width="34" height="96" rx="17"/>
+  </g>
+</svg>

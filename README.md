@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/app-icon.png" width="128" alt="BotRecord icon"></p>
+
 # BotRecord
 
 **Screen recorder + meeting notetaker for the Mac menu bar.** Record your screen or any call, get a live

@@ -78,7 +78,7 @@ if [[ -n "$VERSION" ]]; then
 fi
 # Redistributing the bundled libraries and weights requires shipping their notices with the binary.
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$ROOT/licenses/"*.txt "$STAGE/Contents/Resources/"
-cp "$ROOT/Resources/"*.svg "$STAGE/Contents/Resources/"
+cp "$ROOT/Resources/claude-glyph.svg" "$ROOT/Resources/AppIcon.icns" "$STAGE/Contents/Resources/"
 # MLX finds it under Bundle.main as SwiftPM would bundle it; no other dependency resource bundle is needed.
 mkdir -p "$STAGE/Contents/Resources/mlx-swift_Cmlx.bundle"
 cp "$METALLIB_CACHE" "$STAGE/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib"

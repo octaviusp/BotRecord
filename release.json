@@ -1,9 +1,9 @@
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minimumMacOS": "26.0",
   "arch": "arm64",
   "assets": [
-    {"name": "BotRecord-0.1.0-arm64.zip", "sha256": "0c8c1434c10a096aaee7cc386117c4cb6a77899d236bf3e0043ebca442d99875", "size": 50767601, "kind": "app"},
+    {"name": "BotRecord-0.1.1-arm64.zip", "sha256": "6395ab68013ac79305f54809701075df1ef0ee97251003391c57286c78cc2944", "size": 51806944, "kind": "app"},
     {"name": "config.json", "sha256": "284d6b51bd2b5a5717ae34caff2ff362535790a853992cd2e06996230699f649", "size": 1718, "kind": "model"},
     {"name": "vocab.json", "sha256": "f7218f3ae2c5baf002974a7babf50ee1f719732fb1f349eeefb86b62219dc0cd", "size": 103278, "kind": "model"},
     {"name": "languages.json", "sha256": "a1efe863e1057d4658bce8175c978020ac35a63a3c9a65ae899f324a32c8e4f6", "size": 2020, "kind": "model"},
