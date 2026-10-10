@@ -195,15 +195,25 @@ load_launch_agent() {
         die "couldn't enable launch at login (launchctl bootstrap failed). BotRecord is installed; open it from ~/Applications."
 }
 
+# A folder chosen in Settings wins over the default; shown with ~ like the other paths.
+configured_dir() {
+    local key="$1" fallback="$2" value
+    value="$(defaults read "$BUNDLE_ID" "$key" 2>/dev/null || true)"
+    value="${value:-$HOME/$fallback}"
+    printf '%s' "${value/#$HOME/~}"
+}
+
 print_summary() {
-    local version="$1"
+    local version="$1" recordings notes
+    recordings="$(configured_dir outputDirectory Movies/BotRecord)"
+    notes="$(configured_dir libraryDirectory Documents/BotRecord)"
     cat <<EOF
 
 BotRecord $version is installed.
 
   App            ~/Applications/BotRecord.app (opens at login; turn that off in Settings)
-  Recordings     ~/Movies/BotRecord
-  Meeting notes  ~/Documents/BotRecord
+  Recordings     $recordings
+  Meeting notes  $notes
   Speech model   ~/Library/Application Support/$BUNDLE_ID/models
 
 Shortcuts
