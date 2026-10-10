@@ -20,4 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.start()
         self.controller = controller
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        RunningChildren.shared.terminateAll()
+    }
 }

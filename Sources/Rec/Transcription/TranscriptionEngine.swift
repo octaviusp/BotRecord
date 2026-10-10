@@ -5,7 +5,8 @@ import os
 
 /// Nemotron 3.5 ASR Streaming 0.6B (INT8, MLX on the GPU) behind `SpeechTranscribing`.
 ///
-/// Loads lazily from the downloaded model folder, and unloads after 10 idle minutes to give back ~760 MB.
+/// Loads lazily when a recording with transcription starts (0.06–0.2 s) and is unloaded by its owner as soon as
+/// the last transcript is finished, so the ~760 MB of weights never sit in memory while Rec is idle.
 /// Runs on its own serial queue: inference is synchronous GPU work (~14 ms per 320 ms of audio) that
 /// must stay off the main thread and the capture queues. One recognizer session per open utterance;
 /// speech-swift serializes them on one lock, so two tracks share the loaded weights.
@@ -22,7 +23,6 @@ actor TranscriptionEngine: SpeechTranscribing {
         }
     }
 
-    static let idleUnloadDelay: Duration = .seconds(600)
     // Workaround (speech-swift 0.0.28): a fresh session drops the first words unless 320 ms of audio
     // precede them, so every utterance starts with its real lead-in, padded with silence to 320 ms.
     private static let leadInSamples = SpeechSegmenter.leadInSamples
@@ -39,7 +39,8 @@ actor TranscriptionEngine: SpeechTranscribing {
     private var isWarm = false
     private var sessions: [UtteranceID: NemotronMLXStreamingSession] = [:]
     private var nextID: UInt64 = 0
-    private var idleUnload: Task<Void, Never>?
+    /// Bumped by `unload()`, so a load that was still running when the recording ended is dropped, not kept.
+    private var generation: UInt64 = 0
 
     nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
 
@@ -57,15 +58,12 @@ actor TranscriptionEngine: SpeechTranscribing {
             try model.warmUp()
             isWarm = true
         }
-        scheduleIdleUnload()
     }
 
     func beginUtterance(language: String, leadIn: [Float]) async throws -> UtteranceID {
-        idleUnload?.cancel()
         let model = try await loadedModel()
         // Unknown tags silently fall back to "auto", which returned nothing on some Spanish clips.
         guard model.languages.promptDictionary[language] != nil else {
-            scheduleIdleUnload()
             throw EngineError.unsupportedLanguage(language)
         }
         let session = try model.createSession(language: language)
@@ -85,7 +83,6 @@ actor TranscriptionEngine: SpeechTranscribing {
 
     func finishUtterance(_ utterance: UtteranceID) throws -> String {
         guard let session = sessions.removeValue(forKey: utterance) else { throw EngineError.unknownUtterance }
-        defer { scheduleIdleUnload() }
         _ = try session.pushAudio([Float](repeating: 0, count: Self.flushSamples))
         let text = try session.finalize().last?.text ?? ""
         // The decoder sometimes joins sentences with two spaces.
@@ -94,15 +91,13 @@ actor TranscriptionEngine: SpeechTranscribing {
 
     func discardUtterance(_ utterance: UtteranceID) {
         sessions.removeValue(forKey: utterance)
-        scheduleIdleUnload()
     }
 
     // MARK: Lifetime
 
-    /// Frees the model now (e.g. before its files are deleted). Open utterances are dropped.
+    /// Frees the model now: after the last transcript, or before its files are deleted. Open utterances are dropped.
     func unload() {
-        idleUnload?.cancel()
-        idleUnload = nil
+        generation += 1
         loading?.cancel()
         loading = nil
         sessions.removeAll()
@@ -120,8 +115,10 @@ actor TranscriptionEngine: SpeechTranscribing {
             try await NemotronStreamingASRMLXModel.fromDirectory(modelDirectory, modelId: modelID)
         }
         loading = task
+        let requestedIn = generation
         do {
             let loaded = try await task.value
+            guard generation == requestedIn else { throw CancellationError() }
             loading = nil
             model = loaded
             logger.info("Transcription model loaded from \(self.modelDirectory.lastPathComponent)")
@@ -132,20 +129,4 @@ actor TranscriptionEngine: SpeechTranscribing {
         }
     }
 
-    private func scheduleIdleUnload() {
-        idleUnload?.cancel()
-        guard sessions.isEmpty, model != nil else {
-            idleUnload = nil
-            return
-        }
-        idleUnload = Task { [weak self] in
-            do { try await Task.sleep(for: Self.idleUnloadDelay) } catch { return }
-            await self?.unloadIfIdle()
-        }
-    }
-
-    private func unloadIfIdle() {
-        guard sessions.isEmpty else { return }
-        unload()
-    }
 }

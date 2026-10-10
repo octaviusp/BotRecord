@@ -58,7 +58,6 @@ final class AppController {
         ProcessInfo.processInfo.disableAutomaticTermination("Rec lives in the menu bar")
         CompanionCache.purgeExpired()
         recents.reload()
-        transcription.warmUpIfEnabled()
         registerHotKeys()
         statusItem = StatusItemController(display: { [sessions] in sessions.statusDisplay }) { [weak self] in
             self?.statusItemClicked()

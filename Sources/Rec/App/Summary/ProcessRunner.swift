@@ -42,6 +42,8 @@ struct ProcessRunner: ProcessRunning {
 
         try process.run()
         let control = ProcessControl(process)
+        RunningChildren.shared.insert(control)
+        defer { RunningChildren.shared.remove(control) }
         Self.feed(invocation.standardInput, to: input.fileHandleForWriting)
 
         return try await withTaskCancellationHandler {
@@ -93,8 +95,28 @@ struct ProcessRunner: ProcessRunning {
     }
 }
 
+/// Child processes still running, terminated when Rec quits so a summary in flight never outlives the app.
+final class RunningChildren: @unchecked Sendable {
+    static let shared = RunningChildren()
+
+    private let lock = NSLock()
+    private var controls: [ObjectIdentifier: ProcessControl] = [:]
+
+    fileprivate func insert(_ control: ProcessControl) {
+        lock.withLock { controls[ObjectIdentifier(control)] = control }
+    }
+
+    fileprivate func remove(_ control: ProcessControl) {
+        _ = lock.withLock { controls.removeValue(forKey: ObjectIdentifier(control)) }
+    }
+
+    func terminateAll() {
+        lock.withLock { Array(controls.values) }.forEach { $0.terminate() }
+    }
+}
+
 /// `Process` isn't Sendable; this wrapper only exposes the thread-safe `terminate`.
-private final class ProcessControl: @unchecked Sendable {
+fileprivate final class ProcessControl: @unchecked Sendable {
     private let process: Process
 
     init(_ process: Process) {

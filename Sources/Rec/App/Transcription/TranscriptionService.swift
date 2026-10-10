@@ -29,14 +29,8 @@ final class TranscriptionService {
     /// The model can't be deleted while a recording is using it.
     var isBusy: Bool { liveCount > 0 || !inProgress.isEmpty }
 
-    /// At launch: pays the one-time shader compilation now rather than at the first meeting.
-    func warmUpIfEnabled() {
-        guard settings.meetingTranscribe || settings.transcribeRecordings else { return }
-        prepareEngine()
-    }
-
-    /// Loads and warms the model in the background; the engine unloads it again after 10 idle minutes.
-    func prepareEngine() {
+    /// Loads and warms the model in the background when a recording starts, so the first words don't wait for it.
+    private func prepareEngine() {
         guard isAvailable, let engine = currentEngine() else { return }
         let logger = logger
         Task {
@@ -62,7 +56,7 @@ final class TranscriptionService {
         inProgress.insert(key)
         defer {
             inProgress.remove(key)
-            liveCount -= 1
+            endLive()
         }
         if let output { await transcriber.attach(output) }
         let outcome = await transcriber.finish()
@@ -72,7 +66,14 @@ final class TranscriptionService {
 
     func cancel(_ transcriber: LiveTranscriber) {
         transcriber.cancel()
+        endLive()
+    }
+
+    /// The model only lives while a recording needs it: reloading takes 0.06–0.2 s, keeping it costs ~760 MB.
+    private func endLive() {
         liveCount -= 1
+        guard liveCount == 0, let engine else { return }
+        Task { await engine.unload() }
     }
 
     /// Unloads the engine before deleting the files it may have mapped.
